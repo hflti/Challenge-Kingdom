@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "مملكة التحديات الدراسية"
+description = "تطبيق ويب عربي تفاعلي يحول المذاكرة والواجبات إلى مغامرة بطولية للأطفال، مع خرائط تقدم، معارك زمنية، وموافقة ولي الأمر قبل فتح المكافآت."
+version = "1.0.0"
+id = "artifacts/challenge-kingdom"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25395
+
+[services.development]
+run = "pnpm --filter @workspace/challenge-kingdom run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/challenge-kingdom", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/challenge-kingdom/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25395"
+BASE_PATH = "/"
