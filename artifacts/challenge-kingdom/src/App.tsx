@@ -12,8 +12,6 @@ import {
   Clock3,
   Compass,
   Crown,
-  Gift,
-  HeartHandshake,
   House,
   KeyRound,
   LockKeyhole,
@@ -24,7 +22,6 @@ import {
   Plus,
   RefreshCcw,
   RotateCcw,
-  ScrollText,
   Shield,
   ShieldCheck,
   Sparkles,
@@ -62,13 +59,6 @@ type Mission = {
   duration: number;
   icon: LucideIcon;
   featured?: boolean;
-};
-
-type Reward = {
-  kind: string;
-  title: string;
-  description: string;
-  icon: LucideIcon;
 };
 
 const profiles: Profile[] = [
@@ -125,38 +115,10 @@ const missions: Mission[] = [
   },
 ];
 
-const rewards: Reward[] = [
-  {
-    kind: "كنز من العالم الحقيقي",
-    title: "اختيار الحلوى",
-    description: "يختار البطل حلوى صغيرة من الدرج السري بعد العشاء.",
-    icon: Gift,
-  },
-  {
-    kind: "ترقية افتراضية",
-    title: "درع الحماية",
-    description: "أضيف درع لامع إلى خريطة بطلك. بقيت خطوة واحدة نحو القلعة.",
-    icon: ShieldCheck,
-  },
-  {
-    kind: "بطاقة عائلية",
-    title: "ربع ساعة إضافية",
-    description: "بطاقة تمنحك ربع ساعة إضافية من وقت اللعب هذا المساء.",
-    icon: HeartHandshake,
-  },
-  {
-    kind: "كنز من العالم الحقيقي",
-    title: "اختيار قصة الليلة",
-    description: "أنت تختار القصة التي ستقرأها العائلة قبل النوم.",
-    icon: ScrollText,
-  },
-];
-
 type SavedState = {
   selectedId: ProfileId | null;
   completed: Record<ProfileId, number>;
-  xp: Record<ProfileId, number>;
-  rewards: Record<ProfileId, string[]>;
+  points: Record<ProfileId, number>;
   customMissions: Record<ProfileId, SavedMission[]>;
 };
 
@@ -170,13 +132,14 @@ type SavedMission = {
 const storageKey = "challenge-kingdom-state-v1";
 const mapStages = ["بوابة البيت", "غابة القراءة", "ميدان التحدي", "قلعة الحكمة"];
 const totalStages = mapStages.length;
+const mapTotalPoints = 120;
+const mapFinishPoints = 100;
 
 function readSavedState(): SavedState {
   const fallback: SavedState = {
     selectedId: null,
-    completed: { ayham: 2, kinan: 1 },
-    xp: { ayham: 1280, kinan: 910 },
-    rewards: { ayham: [], kinan: [] },
+    completed: { ayham: 0, kinan: 0 },
+    points: { ayham: 0, kinan: 0 },
     customMissions: { ayham: [], kinan: [] },
   };
   try {
@@ -187,8 +150,7 @@ function readSavedState(): SavedState {
       ...fallback,
       ...parsed,
       completed: { ...fallback.completed, ...(parsed.completed ?? {}) },
-      xp: { ...fallback.xp, ...(parsed.xp ?? {}) },
-      rewards: { ...fallback.rewards, ...(parsed.rewards ?? {}) },
+      points: { ...fallback.points, ...(parsed.points ?? {}) },
       customMissions: { ...fallback.customMissions, ...(parsed.customMissions ?? {}) },
     };
   } catch {
@@ -207,7 +169,14 @@ function formatDuration(seconds: number) {
   return `${minutes} ${minutes === 1 ? "دقيقة" : "دقائق"}`;
 }
 
-function playSound(kind: "bell" | "success" | "failure") {
+function pointsForExtensions(extensionCount: number) {
+  if (extensionCount === 0) return 10;
+  if (extensionCount === 1) return 8;
+  if (extensionCount <= 3) return 5;
+  return 1;
+}
+
+function playSound(kind: "start" | "bell" | "success" | "failure") {
   const AudioContextConstructor =
     window.AudioContext ??
     (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -215,13 +184,16 @@ function playSound(kind: "bell" | "success" | "failure") {
 
   const context = new AudioContextConstructor();
   const notes =
-    kind === "bell"
+    kind === "start"
+      ? [{ frequency: 392, delay: 0, length: 0.14 }, { frequency: 523, delay: 0.16, length: 0.2 }]
+      : kind === "bell"
       ? [{ frequency: 880, delay: 0, length: 0.22 }, { frequency: 660, delay: 0.24, length: 0.34 }]
       : kind === "success"
         ? [
             { frequency: 523, delay: 0, length: 0.12 },
             { frequency: 659, delay: 0.13, length: 0.12 },
             { frequency: 784, delay: 0.26, length: 0.2 },
+            { frequency: 1047, delay: 0.43, length: 0.28 },
           ]
         : [
             { frequency: 330, delay: 0, length: 0.24 },
@@ -257,16 +229,16 @@ function App() {
   const [seconds, setSeconds] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timeUp, setTimeUp] = useState(false);
+  const [extensionCount, setExtensionCount] = useState(0);
   const [finishCodeOpen, setFinishCodeOpen] = useState(false);
   const [finishCode, setFinishCode] = useState("");
   const [finishCodeError, setFinishCodeError] = useState("");
   const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(null);
-  const [revealed, setRevealed] = useState(false);
-  const [activeReward, setActiveReward] = useState<Reward | null>(null);
+  const [pointResult, setPointResult] = useState<{ earned: number; bonus: number; total: number; extensions: number } | null>(null);
 
   const profile = useMemo(() => profiles.find((item) => item.id === selectedId) ?? null, [selectedId]);
   const completed = profile ? saved.completed[profile.id] : 0;
-  const xp = profile ? saved.xp[profile.id] : 0;
+  const points = profile ? saved.points[profile.id] : 0;
   const profileMissions = useMemo(
     () => [
       ...missions,
@@ -303,9 +275,11 @@ function App() {
     setTimerRunning(false);
     setTimeUp(false);
     setFinishCodeOpen(false);
+    setExtensionCount(0);
   };
 
   const startMission = (nextMission: Mission) => {
+    if (points >= mapFinishPoints) return;
     setMission(nextMission);
     setSeconds(nextMission.duration);
     setTimerRunning(false);
@@ -314,6 +288,9 @@ function App() {
     setFinishCode("");
     setFinishCodeError("");
     setAnswerResult(null);
+    setPointResult(null);
+    setExtensionCount(0);
+    playSound("start");
     setScreen("quest");
   };
 
@@ -324,12 +301,13 @@ function App() {
     setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
+    setExtensionCount((count) => count + 1);
     setTimerRunning(true);
   };
 
   const verifyFinishCode = () => {
     if (finishCode !== "1230") {
-      setFinishCodeError("الرمز غير صحيح. أدخل الرمز 1230 للانتقال إلى سؤال الإنجاز.");
+      setFinishCodeError("الرمز غير صحيح. حاول مرة أخرى.");
       return;
     }
     setFinishCodeError("");
@@ -342,13 +320,17 @@ function App() {
     if (answer === "yes") {
       playSound("success");
       setAnswerResult("yes");
+      const earned = pointsForExtensions(extensionCount);
+      const currentPoints = saved.points[profile.id];
+      const rawTotal = currentPoints + earned;
+      const bonus = rawTotal >= mapFinishPoints ? Math.max(0, mapTotalPoints - rawTotal) : 0;
+      const total = Math.min(mapTotalPoints, rawTotal + bonus);
+      setPointResult({ earned, bonus, total, extensions: extensionCount });
       setSaved((current) => ({
         ...current,
         completed: { ...current.completed, [profile.id]: Math.min(totalStages, current.completed[profile.id] + 1) },
-        xp: { ...current.xp, [profile.id]: current.xp[profile.id] + 120 },
+        points: { ...current.points, [profile.id]: total },
       }));
-      setRevealed(false);
-      setActiveReward(null);
       setScreen("reward");
       return;
     }
@@ -356,27 +338,15 @@ function App() {
     setAnswerResult("no");
   };
 
-  const revealReward = () => {
-    const nextReward = rewards[Math.floor(Math.random() * rewards.length)];
-    setActiveReward(nextReward);
-    setRevealed(true);
-    if (profile) {
-      setSaved((current) => ({
-        ...current,
-        rewards: { ...current.rewards, [profile.id]: [...current.rewards[profile.id], nextReward.title] },
-      }));
-    }
-  };
-
   const newChallenge = () => {
     setMission(null);
-    setActiveReward(null);
-    setRevealed(false);
+    setPointResult(null);
     setTimeUp(false);
     setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
     setAnswerResult(null);
+    setExtensionCount(0);
     setScreen("home");
     setTab("quest");
   };
@@ -398,25 +368,25 @@ function App() {
     }));
   };
 
+  const deleteMission = (missionId: string) => {
+    if (!profile) return;
+    setSaved((current) => ({
+      ...current,
+      customMissions: {
+        ...current.customMissions,
+        [profile.id]: (current.customMissions[profile.id] ?? []).filter((item) => item.id !== missionId),
+      },
+    }));
+  };
+
   const resetMap = (enteredCode: string) => {
     if (!profile || enteredCode !== "0321") return false;
     setSaved((current) => ({
       ...current,
       completed: { ...current.completed, [profile.id]: 0 },
+      points: { ...current.points, [profile.id]: 0 },
     }));
     return true;
-  };
-
-  const resetJourney = () => {
-    const clean: SavedState = {
-      selectedId: selectedId,
-      completed: { ayham: 0, kinan: 0 },
-      xp: { ayham: 0, kinan: 0 },
-      rewards: { ayham: [], kinan: [] },
-      customMissions: saved.customMissions,
-    };
-    setSaved(clean);
-    setScreen("home");
   };
 
   if (screen === "choose" || !selectedId) {
@@ -473,15 +443,15 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView saved={saved} onReset={resetJourney} onChooseProfile={() => setScreen("choose")} />
+              <ParentView saved={saved} onChooseProfile={() => setScreen("choose")} />
             ) : screen === "home" ? (
-              <HomeView profile={activeProfile} completed={completed} xp={xp} missions={profileMissions} onStart={startMission} onCreateMission={createMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
+              <HomeView profile={activeProfile} completed={completed} points={points} missions={profileMissions} onStart={startMission} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={newChallenge} onToggle={() => setTimerRunning((value) => !value)} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
               <GateView answerResult={answerResult} onAnswer={answerMission} onBack={newChallenge} />
             ) : (
-              <RewardView revealed={revealed} reward={activeReward} onReveal={revealReward} onNew={newChallenge} />
+              <RewardView result={pointResult} profileName={activeProfile.name} onNew={newChallenge} />
             )}
           </div>
         </main>
@@ -531,19 +501,21 @@ function ProfileChooser({ onChoose }: { onChoose: (id: ProfileId) => void }) {
 function HomeView({
   profile,
   completed,
-  xp,
+  points,
   missions: availableMissions,
   onStart,
   onCreateMission,
+  onDeleteMission,
   onResetMap,
   onParent,
 }: {
   profile: Profile;
   completed: number;
-  xp: number;
+  points: number;
   missions: Mission[];
   onStart: (mission: Mission) => void;
   onCreateMission: (title: string, durationMinutes: number) => void;
+  onDeleteMission: (missionId: string) => void;
   onResetMap: (code: string) => boolean;
   onParent: () => void;
 }) {
@@ -589,13 +561,13 @@ function HomeView({
               <div className="eyebrow">الفصل الثالث • المهمة اليومية</div>
               <h1 className="display-title">مرحباً يا {profile.name}</h1>
               <p className="subtle">الملل يقترب من أسوار المملكة. هل تفتح صفحة جديدة وتدافع عن كنز المعرفة؟</p>
-               <button className="primary-button gold hero-cta" data-testid="button-start-featured" onClick={() => onStart(availableMissions[0])}>ابدأ المهمة <ArrowLeft size={16} /></button>
+               <button className="primary-button gold hero-cta" data-testid="button-start-featured" onClick={() => onStart(availableMissions[0])} disabled={points >= mapFinishPoints}>{points >= mapFinishPoints ? "اكتملت المرحلة" : <>ابدأ المهمة <ArrowLeft size={16} /></>}</button>
             </div>
             <div className="hero-figure" aria-hidden="true"><div className="cape" /><div className="hero-head" /><div className="hero-shield"><Shield size={19} /></div><Sparkles className="hero-spark one" size={19} /><Star className="hero-spark two" size={16} fill="currentColor" /></div>
           </div>
           <div className="stats-strip">
             <div className="stat-card" data-testid="stat-completed"><span className="stat-label">مهام مكتملة</span><span className="stat-value">{completed}</span><span className="stat-note">هذا الأسبوع</span></div>
-            <div className="stat-card" data-testid="stat-xp"><span className="stat-label">نقاط الشجاعة</span><span className="stat-value">{xp.toLocaleString("ar-SA")}</span><span className="stat-note">+120 اليوم</span></div>
+            <div className="stat-card points-stat" data-testid="stat-points"><span className="stat-label">نقاط الخريطة</span><span className="stat-value">{points.toLocaleString("ar-SA")}<small> / {mapTotalPoints}</small></span><span className="stat-note">{points >= mapFinishPoints ? "اكتملت المرحلة الأخيرة" : "اجمع ١٠ نقاط في البداية"}</span></div>
             <div className="stat-card" data-testid="stat-streak"><span className="stat-label">سلسلة الأيام</span><span className="stat-value">{profile.streak}</span><span className="stat-note">أيام متتالية</span></div>
           </div>
         </div>
@@ -626,12 +598,13 @@ function HomeView({
           {taskError && <p className="form-error" data-testid="status-create-mission-error">{taskError}</p>}
         </form>
         <div className="missions-grid">
-          {availableMissions.map((item) => {
+             {availableMissions.map((item) => {
             const Icon = item.icon;
-            return <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} onClick={() => onStart(item)}>
-              <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span></div>
-              <h3>{item.title}</h3><p>{item.description}</p><ArrowLeft className="mission-arrow" size={18} />
-            </button>;
+               const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} onClick={() => onStart(item)} disabled={points >= mapFinishPoints}>
+                 <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span></div>
+                 <h3>{item.title}</h3><p>{item.description}</p><ArrowLeft className="mission-arrow" size={18} />
+               </button>;
+               return item.id.startsWith("custom-") ? <div className="mission-card-wrap" key={item.id}>{missionCard}<button type="button" className="delete-mission" aria-label={`حذف مهمة ${item.title}`} data-testid={`button-delete-mission-${item.id}`} onClick={() => onDeleteMission(item.id)}><CircleX size={15} /> حذف</button></div> : missionCard;
           })}
         </div>
       </section>
@@ -647,9 +620,10 @@ function HomeView({
               return <div className={`map-node ${done ? "done" : current ? "current" : ""}`} key={stage}><div className="node-disc">{done ? <Check size={21} /> : current ? <Swords size={20} /> : <LockKeyhole size={18} />}</div><div className="node-text">{stage}</div><div className="node-caption">{done ? "عبرت بنجاح" : current ? "أنت هنا" : "قريباً"}</div></div>;
             })}
           </div>
-            {completed >= totalStages && <div className="map-complete">
-              <div><strong>اكتملت خريطة {profile.name}</strong><span>أدخل رمز القائد لإعادة الرحلة إلى المرحلة الأولى.</span></div>
-              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" inputMode="numeric" maxLength={4} value={resetCode} onChange={(event) => setResetCode(event.target.value.replace(/\D/g, ""))} placeholder="0321" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={submitMapReset}><RotateCcw size={15} /> إعادة الخريطة</button></div>
+            <div className="map-points-summary"><strong>{points} / {mapTotalPoints}</strong><span>نقطة في خريطة {profile.name}</span><div className="map-points-track"><i style={{ width: `${Math.min(100, (points / mapTotalPoints) * 100)}%` }} /></div></div>
+            {points >= mapFinishPoints && <div className="map-complete">
+              <div><strong>فاز {profile.name} بالمرحلة الأخيرة!</strong><span>أدخل رمز القائد لإعادة الرحلة إلى المرحلة الأولى.</span></div>
+              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" inputMode="numeric" maxLength={4} value={resetCode} onChange={(event) => setResetCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={submitMapReset}><RotateCcw size={15} /> إعادة الخريطة</button></div>
               {resetError && <p className="form-error" data-testid="status-map-reset-error">{resetError}</p>}
             </div>}
         </div>
@@ -708,12 +682,12 @@ function QuestView({
                    <button className="outline-button" data-testid="button-open-finish-code" onClick={onOpenFinishCode}><KeyRound size={16} /> إنهاء المهمة</button>
                  </div>
                ) : (
-                 <div className="finish-code-box">
+                  <form className="finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
                    <label htmlFor="finish-code">رمز إنهاء المهمة</label>
-                   <input id="finish-code" className="code-input" data-testid="input-finish-code" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} placeholder="1230" autoFocus />
+                    <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
                    {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
-                   <button className="primary-button" data-testid="button-verify-finish-code" onClick={onVerifyCode}><ShieldCheck size={16} /> متابعة</button>
-                 </div>
+                    <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
+                  </form>
                )}
              </div>
            )}
@@ -754,39 +728,36 @@ function GateView({ answerResult, onAnswer, onBack }: { answerResult: "yes" | "n
   );
 }
 
-function RewardView({ revealed, reward, onReveal, onNew }: { revealed: boolean; reward: Reward | null; onReveal: () => void; onNew: () => void }) {
-  const RewardIcon = reward?.icon ?? Gift;
+function RewardView({ result, profileName, onNew }: { result: { earned: number; bonus: number; total: number; extensions: number } | null; profileName: string; onNew: () => void }) {
+  const earned = result?.earned ?? 0;
+  const bonus = result?.bonus ?? 0;
   return (
     <section className="reward-screen">
-      <div className="eyebrow" style={{ justifyContent: "center" }}>قاعة الكنوز</div>
-      <h1 data-testid="heading-reward">فتّشوا الصندوق</h1>
-      <p className="reward-sub">{revealed ? "هذا الكنز لك اليوم. احتفلوا به معاً." : "لحظة واحدة تفصل البطل عن مفاجأته."}</p>
-      {!revealed ? (
-        <>
-          <div className="chest-wrap" aria-label="صندوق كنز مقفل"><div className="chest-glow" /><div className="chest" /><div className="chest-lid" /><div className="chest-lock" /></div>
-          <button className="primary-button gold" data-testid="button-reveal-reward" onClick={onReveal}><KeyRound size={17} /> اكشف الكنز</button>
-        </>
-      ) : (
-        <>
-          <div className="reward-card" data-testid="panel-revealed-reward">
-            <div className="reward-type">{reward?.kind}</div><RewardIcon size={39} color="hsl(var(--accent))" style={{ marginTop: 15 }} /><h2>{reward?.title}</h2><p>{reward?.description}</p><span className="reward-stamp"><Sparkles size={14} /> تمت إضافة الكنز إلى دفتر الرحلة</span>
-          </div>
-          <div className="reward-buttons"><button className="primary-button" data-testid="button-new-challenge" onClick={onNew}><Swords size={16} /> تحدٍ جديد</button><button className="outline-button" data-testid="button-view-parent-after-reward" onClick={onNew}><House size={15} /> العودة للمملكة</button></div>
-        </>
-      )}
+      <div className="eyebrow" style={{ justifyContent: "center" }}>قاعة الإنجاز</div>
+      <h1 data-testid="heading-reward">أحسنت يا {profileName}!</h1>
+      <p className="reward-sub">أنجزت التحدي وفتحت طريقاً جديداً في خريطتك.</p>
+      <div className="points-reward-card" data-testid="panel-earned-points">
+        <Sparkles size={38} />
+        <span className="points-reward-label">النقاط المكتسبة</span>
+        <strong className="points-reward-value">+{earned.toLocaleString("ar-SA")}</strong>
+        <span className="points-reward-note">{result?.extensions === 0 ? "أنهيتها من المحاولة الأولى، أداء رائع!" : `أنهيتها بعد ${result?.extensions.toLocaleString("ar-SA")} تمديد، واستمر تركيزك حتى النهاية.`}</span>
+        {bonus > 0 && <span className="finish-bonus">مكافأة الفوز: +{bonus.toLocaleString("ar-SA")} لتكتمل الخريطة إلى {mapTotalPoints} نقطة</span>}
+        <div className="total-points-pill">مجموع الخريطة: {result?.total.toLocaleString("ar-SA")} / {mapTotalPoints}</div>
+      </div>
+      <div className="reward-buttons"><button className="primary-button" data-testid="button-new-challenge" onClick={onNew}><Swords size={16} /> العودة للمملكة</button></div>
     </section>
   );
 }
 
-function ParentView({ saved, onReset, onChooseProfile }: { saved: SavedState; onReset: () => void; onChooseProfile: () => void }) {
+function ParentView({ saved, onChooseProfile }: { saved: SavedState; onChooseProfile: () => void }) {
   const total = saved.completed.ayham + saved.completed.kinan;
   return (
     <section className="parent-view">
       <div className="parent-banner"><div><div className="eyebrow">مرصد الوالدين • {getArabicDate()}</div><h1>غرفة القيادة العائلية</h1><p>ملخص لطيف لما أنجزه الأبطال اليوم، من دون تحويل الرحلة إلى جدول درجات.</p></div><div className="parent-total" data-testid="display-family-total"><strong>{total}</strong><span>مهمة في دفتر العائلة</span></div></div>
       <div className="parent-grid">
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">نبض الأبطال</h2><p className="panel-subtitle">هذا الأسبوع حتى الآن</p></div><Trophy color="hsl(var(--accent))" /></div><div className="child-progress">
-          <div className="child-progress-row"><div className="mini-avatar" style={{ background: profiles[0].color }}>أ</div><div className="child-progress-copy"><strong>أيهم</strong><span>{saved.completed.ayham} مهام مكتملة • {saved.xp.ayham.toLocaleString("ar-SA")} نقطة شجاعة</span><div className="progress-small"><i style={{ width: `${Math.min(100, 35 + saved.completed.ayham * 12)}%` }} /></div></div></div>
-          <div className="child-progress-row"><div className="mini-avatar" style={{ background: profiles[1].color }}>ك</div><div className="child-progress-copy"><strong>كنان</strong><span>{saved.completed.kinan} مهام مكتملة • {saved.xp.kinan.toLocaleString("ar-SA")} نقطة شجاعة</span><div className="progress-small"><i style={{ width: `${Math.min(100, 25 + saved.completed.kinan * 12)}%` }} /></div></div></div>
+          <div className="child-progress-row"><div className="mini-avatar" style={{ background: profiles[0].color }}>أ</div><div className="child-progress-copy"><strong>أيهم</strong><span>{saved.completed.ayham} مهام مكتملة • {saved.points.ayham.toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, (saved.points.ayham / mapTotalPoints) * 100)}%` }} /></div></div></div>
+          <div className="child-progress-row"><div className="mini-avatar" style={{ background: profiles[1].color }}>ك</div><div className="child-progress-copy"><strong>كنان</strong><span>{saved.completed.kinan} مهام مكتملة • {saved.points.kinan.toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, (saved.points.kinan / mapTotalPoints) * 100)}%` }} /></div></div></div>
         </div><button className="outline-button" data-testid="button-switch-from-parent" onClick={onChooseProfile} style={{ width: "100%", marginTop: 24 }}><Users size={15} /> تبديل ملف البطل</button></div>
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">سجل اليوم</h2><p className="panel-subtitle">محطات صغيرة تصنع عادة كبيرة.</p></div><ChartNoAxesColumnIncreasing color="hsl(var(--primary))" /></div><div className="timeline">
           <div className="timeline-item"><span className="timeline-icon"><Check size={14} /></span><div className="timeline-copy"><strong>تم تجهيز الرحلة</strong><p>الحقيبة جاهزة والأدوات في مكانها.</p></div></div>
@@ -794,7 +765,6 @@ function ParentView({ saved, onReset, onChooseProfile }: { saved: SavedState; on
           {total > 0 ? <div className="timeline-item"><span className="timeline-icon"><Trophy size={14} /></span><div className="timeline-copy"><strong>كنز جديد في الدفتر</strong><p>آخر إنجاز عائلي: {total} مهام مكتملة.</p></div></div> : <div className="empty-reward" data-testid="empty-parent-activity"><CircleHelp size={17} /><div>لم يبدأ أي بطل مهمة بعد. الخريطة تنتظر أول خطوة.</div></div>}
         </div></div>
       </div>
-      <div className="section-block"><div className="section-heading"><div><h2>أدوات الوالدين</h2><p>لنبقي اللعب آمناً ومرناً.</p></div></div><div className="panel" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 15, flexWrap: "wrap" }}><div><strong style={{ display: "block", fontSize: 14 }}>إعادة خريطة هذا الجهاز</strong><span className="subtle" style={{ fontSize: 11 }}>يمسح الإنجازات المحلية لتبدأ العائلة حكاية جديدة.</span></div><button className="outline-button" data-testid="button-reset-journey" onClick={onReset}><RotateCcw size={15} /> بدء حكاية جديدة</button></div></div>
     </section>
   );
 }
