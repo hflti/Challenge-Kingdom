@@ -379,7 +379,7 @@ function App() {
   const [finishCode, setFinishCode] = useState("");
   const [finishCodeError, setFinishCodeError] = useState("");
   const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => getInitialActiveChallenge()?.approvalStatus === "rejected" ? "no" : null);
-  const [pointResult, setPointResult] = useState<{ earned: number; bonus: number; total: number; extensions: number } | null>(null);
+  const [pointResult, setPointResult] = useState<{ earned: number; earlyBonus: number; bonus: number; total: number; extensions: number } | null>(null);
   const timerWasRunningRef = useRef(timerRunning);
   const timeUpAnnouncedRef = useRef(timeUp);
   const pauseBellPlayedRef = useRef(false);
@@ -596,17 +596,29 @@ function App() {
     setScreen("gate");
   };
 
+  const openEarlyFinishCode = () => {
+    if (!mission || timeUp || alertSeconds > 0) return;
+    setTimerRunning(false);
+    setPauseActive(false);
+    setPauseEndsAt(null);
+    setFinishCodeOpen(true);
+    setFinishCode("");
+    setFinishCodeError("");
+  };
+
   const answerMission = (answer: "yes" | "no") => {
     if (!profile) return;
     if (answer === "yes") {
       playSound("success");
       setAnswerResult("yes");
-      const earned = pointsForExtensions(extensionCount);
+      const baseEarned = pointsForExtensions(extensionCount);
+      const earlyBonus = !timeUp && seconds > 0 ? 2 : 0;
+      const earned = baseEarned + earlyBonus;
       const currentPoints = saved.points[profile.id];
       const rawTotal = currentPoints + earned;
       const bonus = rawTotal >= mapFinishPoints ? Math.max(0, mapTotalPoints - rawTotal) : 0;
       const total = Math.min(mapTotalPoints, rawTotal + bonus);
-      setPointResult({ earned, bonus, total, extensions: extensionCount });
+      setPointResult({ earned, earlyBonus, bonus, total, extensions: extensionCount });
       setSaved((current) => ({
         ...current,
         completed: { ...current.completed, [profile.id]: Math.min(totalStages, current.completed[profile.id] + 1) },
@@ -771,7 +783,7 @@ function App() {
             ) : screen === "home" ? (
               <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={startMission} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
-              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} alertSeconds={alertSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
+              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} alertSeconds={alertSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onOpenEarlyFinish={openEarlyFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
               <GateView answerResult={answerResult} onAnswer={answerMission} onBack={leaveMission} onCancel={cancelUnfinishedMission} />
             ) : (
@@ -976,6 +988,7 @@ function QuestView({
   onResume,
   onExtend,
   onOpenFinishCode,
+  onOpenEarlyFinish,
   onCode,
   onVerifyCode,
 }: {
@@ -996,12 +1009,14 @@ function QuestView({
   onResume: () => void;
   onExtend: () => void;
   onOpenFinishCode: () => void;
+  onOpenEarlyFinish: () => void;
   onCode: (value: string) => void;
   onVerifyCode: () => void;
 }) {
   const Icon = mission.icon;
   const progress = mission.duration ? ((mission.duration - seconds) / mission.duration) * 100 : 0;
   const nextExtensionSeconds = extensionDuration(mission.duration, extensionCount + 1);
+  const canFinishEarly = seconds < mission.duration || running || pauseActive;
   return (
     <>
       <div className="quest-header"><button className="back-button" data-testid="button-back-to-missions" aria-label="العودة للمهام" onClick={onBack}><ArrowLeft size={18} /></button><div><div className="eyebrow">ميدان التحدي</div><p className="subtle">أثبت أن تركيزك أقوى من الملل.</p></div></div>
@@ -1009,10 +1024,19 @@ function QuestView({
         <section className="quest-card" data-testid="panel-active-quest">
           <div className="eyebrow"><Icon size={14} /> المهمة النشطة</div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
            <div className={`timer-shell ${running ? "running" : ""} ${pauseActive ? "paused" : ""} ${alertSeconds > 0 ? "alerting" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{formatTime(seconds)}</span><span className="timer-label">{pauseActive ? `استراحة ${formatTime(pauseSeconds)}` : alertSeconds > 0 ? `تنبيه النهاية ${formatTime(alertSeconds)}` : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
-          <div className="quest-actions">
+           {!finishCodeOpen && <div className="quest-actions">
               {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume}><Play size={16} /> استئناف التحدي</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>}
-          </div>
-             {!timeUp ? <p className={`quest-note ${pauseActive ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseActive ? `الاستراحة جارية. يمكنك الاستئناف الآن أو استخدام ما تبقى من الرصيد لاحقاً.` : pauseSeconds > 0 ? `رصيد الاستراحة المتبقي: ${formatTime(pauseSeconds)} من أصل دقيقتين.` : "اكتمل رصيد الاستراحة لهذه المهمة."}</p> : (
+              {!timeUp && canFinishEarly && <button className="outline-button early-finish-button" data-testid="button-finish-early" onClick={onOpenEarlyFinish}><KeyRound size={16} /> إنهاء المهمة الآن</button>}
+            </div>}
+            {!timeUp ? finishCodeOpen ? (
+              <form className="finish-code-box early-finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
+                <strong>إنهاء المهمة قبل انتهاء الوقت</strong>
+                <label htmlFor="finish-code">رمز ولي الأمر</label>
+                <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
+                {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
+                <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
+              </form>
+            ) : <p className={`quest-note ${pauseActive ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseActive ? `الاستراحة جارية. يمكنك الاستئناف الآن أو استخدام ما تبقى من الرصيد لاحقاً.` : pauseSeconds > 0 ? `رصيد الاستراحة المتبقي: ${formatTime(pauseSeconds)} من أصل دقيقتين.` : "اكتمل رصيد الاستراحة لهذه المهمة."}</p> : (
              <div className="time-up-panel" data-testid="panel-time-up">
                 <div className="time-up-heading"><BellRing size={20} /><strong>انتهى وقت المعركة!</strong><span>{alertSeconds > 0 ? `تنبيه النهاية جارٍ لمدة ${formatTime(alertSeconds)}. انتظر قبل التمديد.` : "انتهى التنبيه. اختر الخطوة التالية."}</span></div>
                {!finishCodeOpen ? (
@@ -1070,7 +1094,7 @@ function GateView({ answerResult, onAnswer, onBack, onCancel }: { answerResult: 
   );
 }
 
-function RewardView({ result, profileName, onNew }: { result: { earned: number; bonus: number; total: number; extensions: number } | null; profileName: string; onNew: () => void }) {
+function RewardView({ result, profileName, onNew }: { result: { earned: number; earlyBonus: number; bonus: number; total: number; extensions: number } | null; profileName: string; onNew: () => void }) {
   const earned = result?.earned ?? 0;
   const bonus = result?.bonus ?? 0;
   return (
@@ -1083,6 +1107,7 @@ function RewardView({ result, profileName, onNew }: { result: { earned: number; 
         <span className="points-reward-label">النقاط المكتسبة</span>
         <strong className="points-reward-value">+{earned.toLocaleString("ar-SA")}</strong>
         <span className="points-reward-note">{result?.extensions === 0 ? "أنهيتها من المحاولة الأولى، أداء رائع!" : `أنهيتها بعد ${result?.extensions.toLocaleString("ar-SA")} تمديد، واستمر تركيزك حتى النهاية.`}</span>
+        {result?.earlyBonus ? <span className="finish-bonus early-finish-bonus">مكافأة الإنهاء المبكر: +{result.earlyBonus.toLocaleString("ar-SA")} نقطتين إضافيتين</span> : null}
         {bonus > 0 && <span className="finish-bonus">مكافأة الفوز: +{bonus.toLocaleString("ar-SA")} لتكتمل الخريطة إلى {mapTotalPoints} نقطة</span>}
         <div className="total-points-pill">مجموع الخريطة: {result?.total.toLocaleString("ar-SA")} / {mapTotalPoints}</div>
       </div>

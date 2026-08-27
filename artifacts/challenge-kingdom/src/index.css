@@ -361,6 +361,8 @@
 .timer-shell.alerting { animation: alert-ring .8s ease-in-out infinite; }
 .timer-shell.alerting .timer-label { color: #ffd45a; font-weight: 900; }
 .quest-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; }
+.early-finish-button { border-color: rgba(249,240,214,.3); color: rgba(249,240,214,.88); }
+.early-finish-button:hover { background: rgba(249,240,214,.12); color: hsl(var(--primary-foreground)); }
 .quest-note { margin: 17px 0 0; color: rgba(249,240,214,.52); font-size: 11px; }
 .quest-note.pause-note { color: #ffcf4a; font-weight: 800; }
 .time-up-panel { max-width: 520px; margin: 19px auto 0; padding: 14px; border: 1px solid rgba(244,190,57,.38); border-radius: 15px; background: rgba(244,190,57,.09); }
@@ -372,6 +374,8 @@
 .finish-code-box { text-align: right; margin-top: 13px; }
 .finish-code-box .code-input { background: rgba(30,34,70,.65); border-color: rgba(249,240,214,.22); color: hsl(var(--primary-foreground)); }
 .finish-code-box .primary-button { width: 100%; margin-top: 9px; }
+.early-finish-code-box { max-width: 390px; margin: 17px auto 0; padding: 15px; border: 1px solid rgba(244,190,57,.35); border-radius: 15px; background: rgba(244,190,57,.08); }
+.early-finish-code-box strong { display: block; color: hsl(var(--accent)); font-size: 14px; margin-bottom: 14px; }
 .battle-aside { display: grid; gap: 13px; align-content: start; }
 .monster-card { background: #f0d9c2; border: 1px solid #ddbaa0; border-radius: 19px; padding: 20px; min-height: 210px; overflow: hidden; position: relative; }
 .monster-card h3 { margin: 0; color: #6d3c47; font-family: var(--app-font-serif); font-size: 24px; }
