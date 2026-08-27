@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ArrowLeft,
   BellRing,
@@ -268,13 +268,43 @@ function extensionDuration(originalDuration: number, extensionCount: number) {
   return duration;
 }
 
-function playSound(kind: "click" | "start" | "bell" | "alarm" | "success" | "failure") {
+type SoundKind = "click" | "start" | "bell" | "alarm" | "success" | "failure";
+
+let audioContext: AudioContext | null = null;
+let audioMasterGain: GainNode | null = null;
+let lastClickAt = 0;
+
+function getAudioContext() {
   const AudioContextConstructor =
     window.AudioContext ??
     (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AudioContextConstructor) return;
+  if (!AudioContextConstructor) return null;
 
-  const context = new AudioContextConstructor();
+  if (!audioContext || audioContext.state === "closed") {
+    audioContext = new AudioContextConstructor();
+    audioMasterGain = audioContext.createGain();
+    audioMasterGain.gain.value = 0.9;
+    audioMasterGain.connect(audioContext.destination);
+  }
+  return audioContext;
+}
+
+function playSound(kind: SoundKind) {
+  const context = getAudioContext();
+  const masterGain = audioMasterGain;
+  if (!context || !masterGain) return;
+
+  // Browsers may create Web Audio contexts in a suspended state until a
+  // user gesture. Calling resume from the button event unlocks the shared
+  // context on iOS Safari as well as Chromium-based browsers.
+  if (context.state === "suspended") void context.resume();
+
+  if (kind === "click") {
+    const now = performance.now();
+    if (now - lastClickAt < 70) return;
+    lastClickAt = now;
+  }
+
   const notes =
     kind === "click"
       ? [{ frequency: 590, delay: 0, length: 0.055 }]
@@ -308,15 +338,13 @@ function playSound(kind: "click" | "start" | "bell" | "alarm" | "success" | "fai
     oscillator.type = kind === "failure" ? "triangle" : "sine";
     oscillator.frequency.value = frequency;
     gain.gain.setValueAtTime(0.0001, context.currentTime + delay);
-    gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + delay + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + delay + 0.025);
     gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + delay + length);
     oscillator.connect(gain);
-    gain.connect(context.destination);
+    gain.connect(masterGain);
     oscillator.start(context.currentTime + delay);
-    oscillator.stop(context.currentTime + delay + length + 0.03);
+    oscillator.stop(context.currentTime + delay + length + 0.04);
   });
-  const finishAfter = Math.max(...notes.map(({ delay, length }) => delay + length), 0) * 1000 + 120;
-  window.setTimeout(() => void context.close(), finishAfter);
 }
 
 function getArabicDate() {
@@ -352,6 +380,9 @@ function App() {
   const [finishCodeError, setFinishCodeError] = useState("");
   const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => getInitialActiveChallenge()?.approvalStatus === "rejected" ? "no" : null);
   const [pointResult, setPointResult] = useState<{ earned: number; bonus: number; total: number; extensions: number } | null>(null);
+  const timerWasRunningRef = useRef(timerRunning);
+  const timeUpAnnouncedRef = useRef(timeUp);
+  const pauseBellPlayedRef = useRef(false);
 
   const profile = useMemo(() => profiles.find((item) => item.id === selectedId) ?? null, [selectedId]);
   const completed = profile ? saved.completed[profile.id] : 0;
@@ -374,7 +405,9 @@ function App() {
 
   useEffect(() => {
     const playButtonClick = (event: MouseEvent) => {
-      if (event.target instanceof Element && event.target.closest("button:not(:disabled)")) playSound("click");
+      if (!(event.target instanceof Element)) return;
+      const button = event.target.closest<HTMLButtonElement>("button:not(:disabled)");
+      if (button && !button.dataset.sound) playSound("click");
     };
     document.addEventListener("click", playButtonClick, true);
     return () => document.removeEventListener("click", playButtonClick, true);
@@ -382,14 +415,11 @@ function App() {
 
   useEffect(() => {
     if (!timerRunning) return;
+    timerWasRunningRef.current = true;
     const tick = window.setInterval(() => {
       setSeconds((current) => {
         if (current <= 1) {
           setTimerRunning(false);
-          setTimeUp(true);
-            setAlertSeconds(timeUpAlertSeconds);
-            setAlertEndsAt(Date.now() + timeUpAlertSeconds * 1000);
-            playSound("alarm");
           return 0;
         }
         return current - 1;
@@ -397,6 +427,16 @@ function App() {
     }, 1000);
     return () => window.clearInterval(tick);
   }, [timerRunning]);
+
+  useEffect(() => {
+    if (!mission || timerRunning || seconds !== 0 || timeUp || !timerWasRunningRef.current || timeUpAnnouncedRef.current) return;
+    timerWasRunningRef.current = false;
+    timeUpAnnouncedRef.current = true;
+    setTimeUp(true);
+    setAlertSeconds(timeUpAlertSeconds);
+    setAlertEndsAt(Date.now() + timeUpAlertSeconds * 1000);
+    playSound("alarm");
+  }, [mission, seconds, timeUp, timerRunning]);
 
   useEffect(() => {
     if (!pauseActive || pauseSeconds <= 0) return;
@@ -415,7 +455,14 @@ function App() {
   }, [pauseActive, pauseSeconds]);
 
   useEffect(() => {
-    if (pauseActive && pauseSeconds === 5) playSound("bell");
+    if (!pauseActive) {
+      pauseBellPlayedRef.current = false;
+      return;
+    }
+    if (pauseSeconds === 5 && !pauseBellPlayedRef.current) {
+      pauseBellPlayedRef.current = true;
+      playSound("bell");
+    }
   }, [pauseActive, pauseSeconds]);
 
   useEffect(() => {
@@ -469,12 +516,18 @@ function App() {
     setApprovalStatus(active?.approvalStatus ?? null);
     setAnswerResult(active?.approvalStatus === "rejected" ? "no" : null);
     setExtensionCount(active?.extensionCount ?? 0);
+    timerWasRunningRef.current = active?.running ?? false;
+    timeUpAnnouncedRef.current = active?.timeUp ?? false;
+    pauseBellPlayedRef.current = false;
   };
 
   const startMission = (nextMission: Mission) => {
     if (points >= mapFinishPoints) return;
     if (mission && !pointResult) {
-      if (mission.id === nextMission.id) setScreen("quest");
+      if (mission.id === nextMission.id) {
+        playSound("click");
+        setScreen("quest");
+      }
       return;
     }
     setMission(nextMission);
@@ -493,6 +546,9 @@ function App() {
     setAlertEndsAt(null);
     setApprovalStatus(null);
     setExtensionCount(0);
+    timerWasRunningRef.current = false;
+    timeUpAnnouncedRef.current = false;
+    pauseBellPlayedRef.current = false;
     playSound("start");
     setScreen("quest");
   };
@@ -509,10 +565,13 @@ function App() {
     setAlertSeconds(0);
     setAlertEndsAt(null);
     setTimerRunning(true);
+    timerWasRunningRef.current = true;
+    timeUpAnnouncedRef.current = false;
   };
 
   const pauseMission = () => {
     if (!mission || !timerRunning || pauseSeconds <= 0 || timeUp) return;
+    timerWasRunningRef.current = false;
     setTimerRunning(false);
     setPauseActive(true);
     setPauseEndsAt(Date.now() + pauseSeconds * 1000);
@@ -520,6 +579,7 @@ function App() {
 
   const resumeMission = () => {
     if (!mission || !pauseActive || seconds <= 0) return;
+    timerWasRunningRef.current = true;
     setPauseActive(false);
     setPauseEndsAt(null);
     setTimerRunning(true);
@@ -591,6 +651,9 @@ function App() {
     setAlertEndsAt(null);
     setApprovalStatus(null);
     setExtensionCount(0);
+    timerWasRunningRef.current = false;
+    timeUpAnnouncedRef.current = false;
+    pauseBellPlayedRef.current = false;
     if (selectedId) {
       setActiveChallenges((current) => {
         const next = { ...current };
@@ -824,7 +887,7 @@ function HomeView({
               <div className="eyebrow">الفصل الثالث • المهمة اليومية</div>
               <h1 className="display-title">مرحباً يا {profile.name}</h1>
               <p className="subtle">الملل يقترب من أسوار المملكة. هل تفتح صفحة جديدة وتدافع عن كنز المعرفة؟</p>
-               <button className="primary-button gold hero-cta" data-testid="button-start-featured" onClick={() => onStart(activeMission ?? availableMissions[0])} disabled={points >= mapFinishPoints}>{points >= mapFinishPoints ? "اكتملت المرحلة" : activeMission ? <>استأنف التحدي <Play size={16} /></> : <>ابدأ المهمة <ArrowLeft size={16} /></>}</button>
+              <button className="primary-button gold hero-cta" data-testid="button-start-featured" data-sound="start" onClick={() => onStart(activeMission ?? availableMissions[0])} disabled={points >= mapFinishPoints}>{points >= mapFinishPoints ? "اكتملت المرحلة" : activeMission ? <>استأنف التحدي <Play size={16} /></> : <>ابدأ المهمة <ArrowLeft size={16} /></>}</button>
             </div>
             <div className="hero-figure" aria-hidden="true"><div className="cape" /><div className="hero-head" /><div className="hero-shield"><Shield size={19} /></div><Sparkles className="hero-spark one" size={19} /><Star className="hero-spark two" size={16} fill="currentColor" /></div>
           </div>
@@ -863,7 +926,7 @@ function HomeView({
         <div className="missions-grid">
              {availableMissions.map((item) => {
             const Icon = item.icon;
-               const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} onClick={() => onStart(item)} disabled={points >= mapFinishPoints || Boolean(activeMission && activeMission.id !== item.id)}>
+                const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={points >= mapFinishPoints || Boolean(activeMission && activeMission.id !== item.id)}>
                  <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span></div>
                  <h3>{item.title}</h3><p>{item.description}</p><ArrowLeft className="mission-arrow" size={18} />
                </button>;
@@ -997,8 +1060,8 @@ function GateView({ answerResult, onAnswer, onBack, onCancel }: { answerResult: 
           <h1 data-testid="heading-parent-gate">هل تم الإنجاز؟</h1>
           <p>بعد إدخال رمز القائد، يتأكد ولي الأمر من أن المهمة الكاملة أُنجزت فعلاً في الدفتر أو الكتاب.</p>
           <div className="answer-actions">
-            <button className="primary-button gold" data-testid="button-answer-yes" onClick={() => onAnswer("yes")}><CircleCheck size={19} /> نعم، تم الإنجاز</button>
-            <button className="outline-button" data-testid="button-answer-no" onClick={() => onAnswer("no")}><CircleX size={19} /> لا، ليس بعد</button>
+            <button className="primary-button gold" data-testid="button-answer-yes" data-sound="success" onClick={() => onAnswer("yes")}><CircleCheck size={19} /> نعم، تم الإنجاز</button>
+            <button className="outline-button" data-testid="button-answer-no" data-sound="failure" onClick={() => onAnswer("no")}><CircleX size={19} /> لا، ليس بعد</button>
           </div>
         </>
       )}
