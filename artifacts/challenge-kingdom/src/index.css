@@ -315,6 +315,8 @@
 .mission-card h3 { font-size: 17px; margin: 20px 0 5px; color: inherit; }
 .mission-card p { font-size: 11px; line-height: 1.7; color: hsl(var(--muted-foreground)); margin: 0; }
 .featured p { color: rgba(249,240,214,.68); }
+.locked-mission-label { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; color: hsl(var(--secondary)); background: rgba(244,190,57,.17); border-radius: 999px; padding: 5px 8px; font-size: 10px; font-weight: 800; }
+.mission-card.featured .locked-mission-label { color: hsl(var(--secondary)); background: hsl(var(--accent)); }
 .mission-arrow { position: absolute; left: 17px; bottom: 15px; color: hsl(var(--primary)); }
 .featured .mission-arrow { color: hsl(var(--accent)); }
 .delete-mission { position: absolute; left: 10px; top: 10px; border: 0; border-radius: 999px; padding: 5px 7px; display: inline-flex; align-items: center; gap: 3px; background: rgba(191,77,58,.1); color: hsl(var(--destructive)); font-size: 10px; font-weight: 800; }
@@ -374,8 +376,20 @@
 .finish-code-box { text-align: right; margin-top: 13px; }
 .finish-code-box .code-input { background: rgba(30,34,70,.65); border-color: rgba(249,240,214,.22); color: hsl(var(--primary-foreground)); }
 .finish-code-box .primary-button { width: 100%; margin-top: 9px; }
+.finish-code-actions { display: grid; gap: 8px; margin-top: 9px; }
+.finish-code-actions .primary-button { margin-top: 0; }
+.finish-code-actions .outline-button { width: 100%; }
 .early-finish-code-box { max-width: 390px; margin: 17px auto 0; padding: 15px; border: 1px solid rgba(244,190,57,.35); border-radius: 15px; background: rgba(244,190,57,.08); }
 .early-finish-code-box strong { display: block; color: hsl(var(--accent)); font-size: 14px; margin-bottom: 14px; }
+.challenge-unlock-card { display: grid; grid-template-columns: auto 1fr; gap: 10px 13px; margin: 0 0 14px; padding: 16px; color: hsl(var(--primary-foreground)); background: linear-gradient(135deg, hsl(var(--secondary)), hsl(var(--primary))); border: 2px solid hsl(var(--accent)); border-radius: 18px; box-shadow: var(--shadow-soft); }
+.challenge-unlock-icon { width: 42px; height: 42px; display: grid; place-items: center; color: hsl(var(--secondary)); background: hsl(var(--accent)); border-radius: 13px; }
+.challenge-unlock-card strong { font-family: var(--app-font-serif); font-size: 20px; }
+.challenge-unlock-card p { margin: 4px 0 0; color: rgba(249,240,214,.8); font-size: 11px; line-height: 1.7; }
+.challenge-unlock-card form { grid-column: 1 / -1; display: grid; gap: 7px; }
+.challenge-unlock-card label { font-size: 11px; color: rgba(249,240,214,.8); }
+.challenge-unlock-card .code-input { color: hsl(var(--primary-foreground)); background: rgba(11,24,51,.35); border-color: rgba(249,240,214,.32); }
+.challenge-unlock-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 3px; }
+.challenge-unlock-actions .outline-button { color: hsl(var(--primary-foreground)); border-color: rgba(249,240,214,.42); background: transparent; }
 .battle-aside { display: grid; gap: 13px; align-content: start; }
 .monster-card { background: #f0d9c2; border: 1px solid #ddbaa0; border-radius: 19px; padding: 20px; min-height: 210px; overflow: hidden; position: relative; }
 .monster-card h3 { margin: 0; color: #6d3c47; font-family: var(--app-font-serif); font-size: 24px; }
@@ -456,6 +470,11 @@
 .timeline-copy strong { font-size: 12px; }.timeline-copy p { font-size: 11px; color: hsl(var(--muted-foreground)); margin: 3px 0 0; }
 .empty-reward { border: 1px dashed hsl(var(--border)); padding: 20px; text-align: center; border-radius: 13px; margin-top: 16px; color: hsl(var(--muted-foreground)); font-size: 12px; }
 .sound-settings { margin-top: 17px; }
+.extra-challenge-settings { margin-top: 17px; }
+.extra-challenge-settings-icon { color: hsl(var(--secondary)); background: hsl(var(--accent)); }
+.extra-challenge-form { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) auto; align-items: end; gap: 10px; margin-top: 15px; }
+.extra-challenge-form label { display: grid; gap: 6px; color: hsl(var(--muted-foreground)); font-size: 11px; }
+.extra-challenge-form input { width: 100%; }
 .sound-settings-heading { display: flex; align-items: center; gap: 12px; }
 .sound-settings-icon { width: 42px; height: 42px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 13px; color: hsl(var(--primary)); background: rgba(234,75,94,.11); }
 .sound-settings-heading > div:nth-child(2) { flex: 1; min-width: 0; }

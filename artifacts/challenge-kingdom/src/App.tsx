@@ -61,6 +61,8 @@ type Mission = {
   duration: number;
   icon: LucideIcon;
   featured?: boolean;
+  rewardPoints?: number;
+  requiresCode?: boolean;
 };
 
 const profiles: Profile[] = [
@@ -122,6 +124,7 @@ type SavedState = {
   completed: Record<ProfileId, number>;
   points: Record<ProfileId, number>;
   customMissions: Record<ProfileId, SavedMission[]>;
+  extraChallenge: ExtraChallengeSettings;
 };
 
 type SavedMission = {
@@ -129,6 +132,13 @@ type SavedMission = {
   title: string;
   description: string;
   duration: number;
+  rewardPoints?: number;
+  requiresCode?: boolean;
+};
+
+type ExtraChallengeSettings = {
+  duration: number;
+  rewardPoints: number;
 };
 
 type SoundPreferences = {
@@ -165,6 +175,8 @@ const mapTotalPoints = 120;
 const mapFinishPoints = 100;
 const pauseBudgetSeconds = 120;
 const timeUpAlertSeconds = 15;
+const parentCode = "1230";
+const defaultExtraChallenge: ExtraChallengeSettings = { duration: 10 * 60, rewardPoints: 10 };
 
 function readSavedState(): SavedState {
   const fallback: SavedState = {
@@ -172,6 +184,7 @@ function readSavedState(): SavedState {
     completed: { ayham: 0, kinan: 0 },
     points: { ayham: 0, kinan: 0 },
     customMissions: { ayham: [], kinan: [] },
+    extraChallenge: defaultExtraChallenge,
   };
   try {
     const stored = localStorage.getItem(storageKey);
@@ -183,6 +196,10 @@ function readSavedState(): SavedState {
       completed: { ...fallback.completed, ...(parsed.completed ?? {}) },
       points: { ...fallback.points, ...(parsed.points ?? {}) },
       customMissions: { ...fallback.customMissions, ...(parsed.customMissions ?? {}) },
+      extraChallenge: {
+        duration: typeof parsed.extraChallenge?.duration === "number" ? parsed.extraChallenge.duration : fallback.extraChallenge.duration,
+        rewardPoints: typeof parsed.extraChallenge?.rewardPoints === "number" ? parsed.extraChallenge.rewardPoints : fallback.extraChallenge.rewardPoints,
+      },
     };
   } catch {
     return fallback;
@@ -214,7 +231,7 @@ function readSoundPreferences(): SoundPreferences {
 
 function missionFromSaved(savedMission: SavedMission): Mission {
   const existing = missions.find((item) => item.id === savedMission.id);
-  return { ...savedMission, icon: existing?.icon ?? PenLine, featured: existing?.featured };
+  return { ...savedMission, icon: existing?.icon ?? (savedMission.requiresCode ? KeyRound : PenLine), featured: existing?.featured };
 }
 
 function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
@@ -415,6 +432,9 @@ function App() {
   const [finishCodeOpen, setFinishCodeOpen] = useState(false);
   const [finishCode, setFinishCode] = useState("");
   const [finishCodeError, setFinishCodeError] = useState("");
+  const [lockedMission, setLockedMission] = useState<Mission | null>(null);
+  const [unlockCode, setUnlockCode] = useState("");
+  const [unlockCodeError, setUnlockCodeError] = useState("");
   const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => getInitialActiveChallenge()?.approvalStatus === "rejected" ? "no" : null);
   const [pointResult, setPointResult] = useState<{ earned: number; earlyBonus: number; bonus: number; total: number; extensions: number } | null>(null);
   const timerWasRunningRef = useRef(timerRunning);
@@ -428,8 +448,17 @@ function App() {
     () => [
       ...missions,
       ...(selectedId ? (saved.customMissions[selectedId] ?? []).map((item) => ({ ...item, icon: PenLine })) : []),
+      {
+        id: "extra-challenge",
+        title: "تحدي إضافي",
+        description: "تحدٍ خاص يفتحه ولي الأمر بالرمز، ومكافأته يحددها القائد.",
+        duration: saved.extraChallenge.duration,
+        rewardPoints: saved.extraChallenge.rewardPoints,
+        requiresCode: true,
+        icon: KeyRound,
+      },
     ],
-    [saved.customMissions, selectedId],
+    [saved.customMissions, saved.extraChallenge, selectedId],
   );
 
   useEffect(() => {
@@ -548,6 +577,9 @@ function App() {
   const chooseProfile = (id: ProfileId) => {
     const active = restoreActiveChallenge(activeChallenges[id]);
     setSelectedId(id);
+    setLockedMission(null);
+    setUnlockCode("");
+    setUnlockCodeError("");
     setTab("quest");
     setScreen(active ? (active.approvalStatus ? "gate" : "quest") : "home");
     setMission(active ? missionFromSaved(active.mission) : null);
@@ -600,6 +632,35 @@ function App() {
     setScreen("quest");
   };
 
+  const requestMissionStart = (nextMission: Mission) => {
+    if (!nextMission.requiresCode) {
+      startMission(nextMission);
+      return;
+    }
+    setLockedMission(nextMission);
+    setUnlockCode("");
+    setUnlockCodeError("");
+  };
+
+  const unlockExtraChallenge = () => {
+    if (!lockedMission) return;
+    if (unlockCode !== parentCode) {
+      setUnlockCodeError("الرمز غير صحيح. اطلب مساعدة ولي الأمر.");
+      return;
+    }
+    const nextMission = lockedMission;
+    setLockedMission(null);
+    setUnlockCode("");
+    setUnlockCodeError("");
+    startMission(nextMission);
+  };
+
+  const cancelExtraChallengeUnlock = () => {
+    setLockedMission(null);
+    setUnlockCode("");
+    setUnlockCodeError("");
+  };
+
   const extendMission = () => {
     if (!mission || alertSeconds > 0) return;
     const nextCount = extensionCount + 1;
@@ -633,11 +694,15 @@ function App() {
   };
 
   const verifyFinishCode = () => {
-    if (finishCode !== "1230") {
+    if (finishCode !== parentCode) {
       setFinishCodeError("الرمز غير صحيح. حاول مرة أخرى.");
       return;
     }
+    setTimerRunning(false);
+    setPauseActive(false);
+    setPauseEndsAt(null);
     setFinishCodeError("");
+    setFinishCodeOpen(false);
     setAnswerResult(null);
     setApprovalStatus("gate");
     setScreen("gate");
@@ -645,10 +710,17 @@ function App() {
 
   const openEarlyFinishCode = () => {
     if (!mission || timeUp || alertSeconds > 0) return;
-    setTimerRunning(false);
+    timerWasRunningRef.current = true;
+    setTimerRunning(true);
     setPauseActive(false);
     setPauseEndsAt(null);
     setFinishCodeOpen(true);
+    setFinishCode("");
+    setFinishCodeError("");
+  };
+
+  const closeFinishCode = () => {
+    setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
   };
@@ -658,7 +730,7 @@ function App() {
     if (answer === "yes") {
       playSound("success");
       setAnswerResult("yes");
-      const baseEarned = pointsForExtensions(extensionCount);
+      const baseEarned = mission?.rewardPoints ?? pointsForExtensions(extensionCount);
       const earlyBonus = !timeUp && seconds > 0 ? 2 : 0;
       const earned = baseEarned + earlyBonus;
       const currentPoints = saved.points[profile.id];
@@ -685,17 +757,22 @@ function App() {
     setApprovalStatus("rejected");
   };
 
-  const cancelUnfinishedMission = () => {
+  const cancelUnfinishedMission = (withPenalty: boolean) => {
     if (!profile) return;
-    setSaved((current) => ({
-      ...current,
-      points: { ...current.points, [profile.id]: current.points[profile.id] - 2 },
-    }));
+    if (withPenalty) {
+      setSaved((current) => ({
+        ...current,
+        points: { ...current.points, [profile.id]: current.points[profile.id] - 2 },
+      }));
+    }
     newChallenge();
   };
 
   const newChallenge = () => {
     setMission(null);
+    setLockedMission(null);
+    setUnlockCode("");
+    setUnlockCodeError("");
     setPointResult(null);
     setTimerRunning(false);
     setTimeUp(false);
@@ -759,6 +836,13 @@ function App() {
         ...current.customMissions,
         [profile.id]: (current.customMissions[profile.id] ?? []).filter((item) => item.id !== missionId),
       },
+    }));
+  };
+
+  const saveExtraChallenge = (durationMinutes: number, rewardPoints: number) => {
+    setSaved((current) => ({
+      ...current,
+      extraChallenge: { duration: durationMinutes * 60, rewardPoints },
     }));
   };
 
@@ -826,11 +910,11 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => setScreen("choose")} />
+              <ParentView saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => setScreen("choose")} />
             ) : screen === "home" ? (
-              <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={startMission} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
+              <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
-              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} alertSeconds={alertSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onOpenEarlyFinish={openEarlyFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
+              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} alertSeconds={alertSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
               <GateView answerResult={answerResult} onAnswer={answerMission} onBack={leaveMission} onCancel={cancelUnfinishedMission} />
             ) : (
@@ -887,7 +971,13 @@ function HomeView({
   points,
   activeMission,
   missions: availableMissions,
+  lockedMission,
+  unlockCode,
+  unlockCodeError,
   onStart,
+  onUnlockCode,
+  onUnlock,
+  onCancelUnlock,
   onCreateMission,
   onDeleteMission,
   onResetMap,
@@ -898,7 +988,13 @@ function HomeView({
   points: number;
   activeMission: Mission | null;
   missions: Mission[];
+  lockedMission: Mission | null;
+  unlockCode: string;
+  unlockCodeError: string;
   onStart: (mission: Mission) => void;
+  onUnlockCode: (value: string) => void;
+  onUnlock: () => void;
+  onCancelUnlock: () => void;
   onCreateMission: (title: string, durationMinutes: number) => void;
   onDeleteMission: (missionId: string) => void;
   onResetMap: (code: string) => boolean;
@@ -970,6 +1066,24 @@ function HomeView({
 
       <section className="section-block">
         <div className="section-heading"><div><h2>اختر مهمة كاملة</h2><p>كل مهمة تفتح جزءاً جديداً من الخريطة.</p></div><span className="eyebrow">محطات اليوم</span></div>
+        {lockedMission && (
+          <section className="challenge-unlock-card" data-testid="panel-extra-challenge-lock">
+            <div className="challenge-unlock-icon"><LockKeyhole size={23} /></div>
+            <div>
+              <strong>فتح «{lockedMission.title}»</strong>
+              <p>هذا تحدٍ خاص. أدخل رمز ولي الأمر لبدء العدّاد.</p>
+            </div>
+            <form onSubmit={(event) => { event.preventDefault(); onUnlock(); }}>
+              <label htmlFor="extra-challenge-code">رمز ولي الأمر</label>
+              <input id="extra-challenge-code" className="code-input" data-testid="input-extra-challenge-code" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={unlockCode} onChange={(event) => onUnlockCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز فتح التحدي الإضافي" autoFocus />
+              {unlockCodeError && <p className="form-error" data-testid="status-extra-challenge-code-error">{unlockCodeError}</p>}
+              <div className="challenge-unlock-actions">
+                <button className="primary-button" type="submit" data-testid="button-unlock-extra-challenge"><KeyRound size={16} /> فتح التحدي</button>
+                <button className="outline-button" type="button" data-testid="button-cancel-extra-challenge-unlock" onClick={onCancelUnlock}><ArrowLeft size={16} /> العودة للمهام</button>
+              </div>
+            </form>
+          </section>
+        )}
         <form className="mission-composer" onSubmit={submitMission} data-testid="form-create-mission">
           <div className="composer-copy">
             <div className="composer-icon"><PenLine size={18} /></div>
@@ -987,7 +1101,7 @@ function HomeView({
             const Icon = item.icon;
                 const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={points >= mapFinishPoints || Boolean(activeMission && activeMission.id !== item.id)}>
                  <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span></div>
-                 <h3>{item.title}</h3><p>{item.description}</p><ArrowLeft className="mission-arrow" size={18} />
+                  <h3>{item.title}</h3><p>{item.description}</p>{item.requiresCode && <span className="locked-mission-label"><LockKeyhole size={12} /> يحتاج رمز ولي الأمر • مكافأة {item.rewardPoints?.toLocaleString("ar-SA")} نقطة</span>}<ArrowLeft className="mission-arrow" size={18} />
                </button>;
                return item.id.startsWith("custom-") ? <div className="mission-card-wrap" key={item.id}>{missionCard}<button type="button" className="delete-mission" aria-label={`حذف مهمة ${item.title}`} data-testid={`button-delete-mission-${item.id}`} onClick={() => onDeleteMission(item.id)}><CircleX size={15} /> حذف</button></div> : missionCard;
           })}
@@ -1036,6 +1150,7 @@ function QuestView({
   onExtend,
   onOpenFinishCode,
   onOpenEarlyFinish,
+  onCancelFinishCode,
   onCode,
   onVerifyCode,
 }: {
@@ -1057,6 +1172,7 @@ function QuestView({
   onExtend: () => void;
   onOpenFinishCode: () => void;
   onOpenEarlyFinish: () => void;
+  onCancelFinishCode: () => void;
   onCode: (value: string) => void;
   onVerifyCode: () => void;
 }) {
@@ -1081,7 +1197,10 @@ function QuestView({
                 <label htmlFor="finish-code">رمز ولي الأمر</label>
                 <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
                 {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
-                <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
+                <div className="finish-code-actions">
+                  <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
+                  <button className="outline-button" type="button" data-testid="button-cancel-finish-code" onClick={onCancelFinishCode}><ArrowLeft size={16} /> العودة للتحدي</button>
+                </div>
               </form>
             ) : <p className={`quest-note ${pauseActive ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseActive ? `الاستراحة جارية. يمكنك الاستئناف الآن أو استخدام ما تبقى من الرصيد لاحقاً.` : pauseSeconds > 0 ? `رصيد الاستراحة المتبقي: ${formatTime(pauseSeconds)} من أصل دقيقتين.` : "اكتمل رصيد الاستراحة لهذه المهمة."}</p> : (
              <div className="time-up-panel" data-testid="panel-time-up">
@@ -1096,7 +1215,10 @@ function QuestView({
                    <label htmlFor="finish-code">رمز إنهاء المهمة</label>
                      <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
                    {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
-                    <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
+                    <div className="finish-code-actions">
+                      <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
+                      <button className="outline-button" type="button" data-testid="button-cancel-finish-code" onClick={onCancelFinishCode}><ArrowLeft size={16} /> العودة للتحدي</button>
+                    </div>
                   </form>
                )}
              </div>
@@ -1111,7 +1233,7 @@ function QuestView({
   );
 }
 
-function GateView({ answerResult, onAnswer, onBack, onCancel }: { answerResult: "yes" | "no" | null; onAnswer: (answer: "yes" | "no") => void; onBack: () => void; onCancel: () => void }) {
+function GateView({ answerResult, onAnswer, onBack, onCancel }: { answerResult: "yes" | "no" | null; onAnswer: (answer: "yes" | "no") => void; onBack: () => void; onCancel: (withPenalty: boolean) => void }) {
   return (
     <section className="gate-card">
       <div className="gate-seal"><LockKeyhole size={34} /></div>
@@ -1123,7 +1245,8 @@ function GateView({ answerResult, onAnswer, onBack, onCancel }: { answerResult: 
           <div className="answer-result failure-result"><CircleX size={25} /><strong>لا يوجد تقدم على الخريطة</strong><span>شغّلنا موسيقى الفشل حتى تعرف أن المرحلة لم تُفتح.</span></div>
           <div className="answer-actions">
             <button className="primary-button" data-testid="button-return-after-failure" onClick={onBack}><Map size={16} /> العودة إلى الخريطة</button>
-            <button className="outline-button cancel-mission-button" data-testid="button-cancel-unfinished-mission" onClick={onCancel}><CircleX size={16} /> إلغاء المهمة وخصم نقطتين</button>
+            <button className="outline-button" data-testid="button-cancel-unfinished-mission-without-penalty" onClick={() => onCancel(false)}><CircleX size={16} /> إلغاء المهمة بلا خصم</button>
+            <button className="outline-button cancel-mission-button" data-testid="button-cancel-unfinished-mission" onClick={() => onCancel(true)}><CircleX size={16} /> إلغاء المهمة وخصم نقطتين</button>
           </div>
         </>
       ) : (
@@ -1167,14 +1290,36 @@ function ParentView({
   saved,
   soundPreferences,
   onSoundPreferencesChange,
+  onSaveExtraChallenge,
   onChooseProfile,
 }: {
   saved: SavedState;
   soundPreferences: SoundPreferences;
   onSoundPreferencesChange: (preferences: SoundPreferences) => void;
+  onSaveExtraChallenge: (durationMinutes: number, rewardPoints: number) => void;
   onChooseProfile: () => void;
 }) {
   const total = saved.completed.ayham + saved.completed.kinan;
+  const [extraMinutes, setExtraMinutes] = useState(String(saved.extraChallenge.duration / 60));
+  const [extraPoints, setExtraPoints] = useState(String(saved.extraChallenge.rewardPoints));
+  const [extraChallengeError, setExtraChallengeError] = useState("");
+
+  const submitExtraChallenge = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const minutes = Number(extraMinutes);
+    const rewardPoints = Number(extraPoints);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
+      setExtraChallengeError("اختر مدة بين دقيقة واحدة وساعتين.");
+      return;
+    }
+    if (!Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 50) {
+      setExtraChallengeError("اختر مكافأة بين نقطة واحدة و50 نقطة.");
+      return;
+    }
+    onSaveExtraChallenge(minutes, rewardPoints);
+    setExtraChallengeError("");
+  };
+
   return (
     <section className="parent-view">
       <div className="parent-banner"><div><div className="eyebrow">مرصد الوالدين • {getArabicDate()}</div><h1>غرفة القيادة العائلية</h1><p>ملخص لطيف لما أنجزه الأبطال اليوم، من دون تحويل الرحلة إلى جدول درجات.</p></div><div className="parent-total" data-testid="display-family-total"><strong>{total}</strong><span>مهمة في دفتر العائلة</span></div></div>
@@ -1189,6 +1334,21 @@ function ParentView({
           {total > 0 ? <div className="timeline-item"><span className="timeline-icon"><Trophy size={14} /></span><div className="timeline-copy"><strong>كنز جديد في الدفتر</strong><p>آخر إنجاز عائلي: {total} مهام مكتملة.</p></div></div> : <div className="empty-reward" data-testid="empty-parent-activity"><CircleHelp size={17} /><div>لم يبدأ أي بطل مهمة بعد. الخريطة تنتظر أول خطوة.</div></div>}
         </div></div>
       </div>
+      <section className="extra-challenge-settings panel" data-testid="panel-extra-challenge-settings">
+        <div className="sound-settings-heading">
+          <div className="sound-settings-icon extra-challenge-settings-icon" aria-hidden="true"><KeyRound size={21} /></div>
+          <div>
+            <h2 className="panel-title">تحدي إضافي</h2>
+            <p className="panel-subtitle">اضبط وقت ومكافأة التحدي الخاص. لن يبدأ الطفل التحدي إلا بعد إدخال رمز ولي الأمر.</p>
+          </div>
+        </div>
+        <form className="extra-challenge-form" onSubmit={submitExtraChallenge}>
+          <label><span>الوقت بالدقائق</span><input data-testid="input-extra-challenge-duration" type="number" min="1" max="120" step="1" value={extraMinutes} onChange={(event) => setExtraMinutes(event.target.value)} /></label>
+          <label><span>نقاط المكافأة</span><input data-testid="input-extra-challenge-reward" type="number" min="1" max="50" step="1" value={extraPoints} onChange={(event) => setExtraPoints(event.target.value)} /></label>
+          <button className="primary-button" type="submit" data-testid="button-save-extra-challenge"><Check size={16} /> حفظ التحدي الإضافي</button>
+        </form>
+        {extraChallengeError && <p className="form-error" data-testid="status-extra-challenge-settings-error">{extraChallengeError}</p>}
+      </section>
        <section className="sound-settings panel" data-testid="panel-sound-settings">
          <div className="sound-settings-heading">
            <div className="sound-settings-icon" aria-hidden="true">{soundPreferences.enabled ? <Volume2 size={21} /> : <VolumeX size={21} />}</div>
