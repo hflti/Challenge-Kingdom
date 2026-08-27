@@ -189,6 +189,7 @@
   background: rgba(255,255,255,.05); display: flex; align-items: center; gap: 10px;
 }
 .mini-avatar { width: 35px; height: 35px; display: grid; place-items: center; border-radius: 11px; background: hsl(var(--primary)); color: white; font-weight: 900; }
+.mini-avatar.profile-photo { display: block; object-fit: cover; object-position: center 23%; border: 2px solid rgba(249,240,214,.72); box-shadow: 0 3px 8px rgba(22,18,38,.18); }
 .side-profile-copy { min-width: 0; flex: 1; }
 .side-profile-copy strong { display: block; font-size: 13px; }
 .side-profile-copy span { display: block; color: rgba(249,240,214,.56); font-size: 11px; margin-top: 2px; }
@@ -347,7 +348,9 @@
 .profile-card { border: 1px solid hsl(var(--card-border)); border-radius: 24px; padding: 24px; background: hsl(var(--card)); text-align: center; transition: transform .25s, box-shadow .25s, border-color .25s; position: relative; overflow: hidden; }
 .profile-card:hover { transform: translateY(-7px) rotate(-.4deg); box-shadow: var(--shadow-deep); border-color: hsl(var(--primary)); }
 .profile-card::after { content: ''; position: absolute; width: 180px; height: 180px; border-radius: 50%; bottom: -114px; left: calc(50% - 90px); background: rgba(244,190,57,.16); }
-.profile-avatar { width: 98px; height: 98px; display: grid; place-items: center; margin: 5px auto 17px; border-radius: 30px 30px 30px 10px; background: hsl(var(--secondary)); color: hsl(var(--accent)); border: 6px solid hsl(var(--accent)); font-family: var(--app-font-serif); font-size: 40px; transform: rotate(-4deg); position: relative; z-index: 1; }
+.profile-avatar { width: 98px; height: 98px; display: grid; place-items: center; margin: 5px auto 17px; border-radius: 30px 30px 30px 10px; background: hsl(var(--secondary)); color: hsl(var(--accent)); border: 6px solid hsl(var(--accent)); font-family: var(--app-font-serif); font-size: 40px; transform: rotate(-4deg); position: relative; z-index: 1; overflow: hidden; }
+.profile-choose-photo { width: 100%; height: 100%; object-fit: cover; object-position: center 24%; display: block; }
+.profile-avatar-icon { position: absolute; left: 7px; bottom: 7px; width: 25px; height: 25px; padding: 4px; border-radius: 50%; color: hsl(var(--accent)); background: hsl(var(--secondary)); box-shadow: 0 2px 6px rgba(22,18,38,.25); z-index: 2; }
 .profile-card:nth-child(2) .profile-avatar { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border-color: hsl(var(--secondary)); transform: rotate(4deg); }
 .profile-card h2 { margin: 0; color: hsl(var(--secondary)); font-family: var(--app-font-serif); font-size: 29px; position: relative; z-index: 1; }
 .profile-card .grade { color: hsl(var(--primary)); font-size: 12px; font-weight: 800; margin: 4px 0 11px; position: relative; z-index: 1; }

@@ -35,6 +35,8 @@ import {
   VolumeX,
   type LucideIcon,
 } from "lucide-react";
+import ayhamPhoto from "@assets/أيهم_1787868667283.jpeg";
+import kinanPhoto from "@assets/كنان_1787868667282.jpeg";
 
 type ProfileId = "ayham" | "kinan";
 type Screen = "choose" | "home" | "quest" | "gate" | "reward";
@@ -47,6 +49,7 @@ type Profile = {
   title: string;
   quote: string;
   initials: string;
+  photo: string;
   color: string;
   icon: LucideIcon;
   level: number;
@@ -73,6 +76,7 @@ const profiles: Profile[] = [
     title: "فارس نجمة الشمال",
     quote: "أجمع المعرفة مثلما يجمع الفارس كنوزه.",
     initials: "أ",
+    photo: ayhamPhoto,
     color: "#ea4b5e",
     icon: Shield,
     level: 7,
@@ -86,6 +90,7 @@ const profiles: Profile[] = [
     title: "مستكشف الجزر السبع",
     quote: "كل صفحة جديدة جزيرة لم أزرها بعد.",
     initials: "ك",
+    photo: kinanPhoto,
     color: "#e58a46",
     icon: Compass,
     level: 5,
@@ -1287,7 +1292,7 @@ function App() {
             </button>
           </nav>
           <div className="side-profile" data-testid="display-sidebar-profile">
-            <div className="mini-avatar" style={{ background: activeProfile.color }}>{activeProfile.initials}</div>
+            <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} />
             <div className="side-profile-copy"><strong>{activeProfile.name}</strong><span>{activeProfile.title}</span></div>
             <button className="icon-button" data-testid="button-switch-sidebar-profile" aria-label="تبديل البطل" onClick={() => setScreen("choose")}><RefreshCcw size={15} /></button>
           </div>
@@ -1307,7 +1312,7 @@ function App() {
               </span>
               <span className="date-chip" data-testid="text-today-date">{getArabicDate()}</span>
               <button className="profile-switch" data-testid="button-switch-profile" onClick={() => setScreen("choose")}>
-                <span className="mini-avatar" style={{ background: activeProfile.color }}>{activeProfile.initials}</span>
+                <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} />
                 <span>تبديل البطل</span>
                 <ChevronLeft size={14} />
               </button>
@@ -1389,7 +1394,7 @@ function ProfileChooser({ onChoose }: { onChoose: (id: ProfileId) => void }) {
             const Icon = item.icon;
             return (
               <button key={item.id} className="profile-card" data-testid={`button-profile-${item.id}`} onClick={() => onChoose(item.id)}>
-                <div className="profile-avatar"><Icon size={47} strokeWidth={1.8} /></div>
+                <div className="profile-avatar"><img className="profile-choose-photo" src={item.photo} alt={`صورة ${item.name}`} /><Icon className="profile-avatar-icon" size={47} strokeWidth={1.8} /></div>
                 <h2>{item.name}</h2>
                 <div className="grade">{item.grade}</div>
                 <p className="quote">«{item.quote}»</p>
@@ -1806,8 +1811,8 @@ function ParentView({
       <div className="parent-banner"><div><div className="eyebrow">مرصد الوالدين • {getArabicDate()}</div><h1>غرفة القيادة العائلية</h1><p>ملخص لطيف لما أنجزه الأبطال اليوم، من دون تحويل الرحلة إلى جدول درجات.</p></div><div className="parent-total" data-testid="display-family-total"><strong>{total}</strong><span>مهمة في دفتر العائلة</span></div></div>
       <div className="parent-grid">
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">نبض الأبطال</h2><p className="panel-subtitle">هذا الأسبوع حتى الآن</p></div><Trophy color="hsl(var(--accent))" /></div><div className="child-progress">
-          <div className="child-progress-row"><div className="mini-avatar" style={{ background: profiles[0].color }}>أ</div><div className="child-progress-copy"><strong>أيهم</strong><span>{saved.completed.ayham} مهام مكتملة • {saved.points.ayham.toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, (saved.points.ayham / mapTotalPoints) * 100)}%` }} /></div></div></div>
-          <div className="child-progress-row"><div className="mini-avatar" style={{ background: profiles[1].color }}>ك</div><div className="child-progress-copy"><strong>كنان</strong><span>{saved.completed.kinan} مهام مكتملة • {saved.points.kinan.toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, (saved.points.kinan / mapTotalPoints) * 100)}%` }} /></div></div></div>
+          <div className="child-progress-row"><img className="mini-avatar profile-photo" src={profiles[0].photo} alt="صورة أيهم" /><div className="child-progress-copy"><strong>أيهم</strong><span>{saved.completed.ayham} مهام مكتملة • {saved.points.ayham.toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, (saved.points.ayham / mapTotalPoints) * 100)}%` }} /></div></div></div>
+          <div className="child-progress-row"><img className="mini-avatar profile-photo" src={profiles[1].photo} alt="صورة كنان" /><div className="child-progress-copy"><strong>كنان</strong><span>{saved.completed.kinan} مهام مكتملة • {saved.points.kinan.toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, (saved.points.kinan / mapTotalPoints) * 100)}%` }} /></div></div></div>
         </div><button className="outline-button" data-testid="button-switch-from-parent" onClick={onChooseProfile} style={{ width: "100%", marginTop: 24 }}><Users size={15} /> تبديل ملف البطل</button></div>
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">سجل اليوم</h2><p className="panel-subtitle">محطات صغيرة تصنع عادة كبيرة.</p></div><ChartNoAxesColumnIncreasing color="hsl(var(--primary))" /></div><div className="timeline">
           <div className="timeline-item"><span className="timeline-icon"><Check size={14} /></span><div className="timeline-copy"><strong>تم تجهيز الرحلة</strong><p>الحقيبة جاهزة والأدوات في مكانها.</p></div></div>
