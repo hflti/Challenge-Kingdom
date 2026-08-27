@@ -525,6 +525,10 @@ function App() {
   const [lockedMission, setLockedMission] = useState<Mission | null>(null);
   const [unlockCode, setUnlockCode] = useState("");
   const [unlockCodeError, setUnlockCodeError] = useState("");
+  const [extraSetupOpen, setExtraSetupOpen] = useState(false);
+  const [extraSetupMinutes, setExtraSetupMinutes] = useState("");
+  const [extraSetupPoints, setExtraSetupPoints] = useState("");
+  const [extraSetupError, setExtraSetupError] = useState("");
   const [familyCode, setFamilyCode] = useState(() => readFamilyCode());
   const [syncStatus, setSyncStatus] = useState<"needs-code" | "connecting" | "synced" | "offline">(() => readFamilyCode() ? "connecting" : "needs-code");
   const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => getInitialActiveChallenge()?.approvalStatus === "rejected" ? "no" : null);
@@ -907,7 +911,7 @@ function App() {
   useEffect(() => {
     if (!selectedId || !mission) return;
     const persisted: ActiveChallenge = {
-      mission: { id: mission.id, title: mission.title, description: mission.description, duration: mission.duration },
+      mission: { id: mission.id, title: mission.title, description: mission.description, duration: mission.duration, rewardPoints: mission.rewardPoints, requiresCode: mission.requiresCode },
       seconds,
       extensionCount,
       pauseSeconds,
@@ -1004,9 +1008,30 @@ function App() {
       return;
     }
     const nextMission = lockedMission;
-    setLockedMission(null);
     setUnlockCode("");
     setUnlockCodeError("");
+    setExtraSetupMinutes(String(Math.max(1, Math.round(nextMission.duration / 60))));
+    setExtraSetupPoints(String(nextMission.rewardPoints ?? defaultExtraChallenge.rewardPoints));
+    setExtraSetupError("");
+    setExtraSetupOpen(true);
+  };
+
+  const startCustomizedExtraChallenge = () => {
+    if (!lockedMission) return;
+    const minutes = Number(extraSetupMinutes);
+    const rewardPoints = Number(extraSetupPoints);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
+      setExtraSetupError("اختر مدة بين دقيقة واحدة وساعتين.");
+      return;
+    }
+    if (!Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 50) {
+      setExtraSetupError("اختر مكافأة بين نقطة واحدة و50 نقطة.");
+      return;
+    }
+    const nextMission = { ...lockedMission, duration: minutes * 60, rewardPoints };
+    setLockedMission(null);
+    setExtraSetupOpen(false);
+    setExtraSetupError("");
     startMission(nextMission);
   };
 
@@ -1014,6 +1039,8 @@ function App() {
     setLockedMission(null);
     setUnlockCode("");
     setUnlockCodeError("");
+    setExtraSetupOpen(false);
+    setExtraSetupError("");
   };
 
   const extendMission = () => {
@@ -1291,7 +1318,7 @@ function App() {
             {tab === "parent" && screen === "home" ? (
               <ParentView saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => setScreen("choose")} />
             ) : screen === "home" ? (
-              <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
+              <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
@@ -1386,10 +1413,17 @@ function HomeView({
   lockedMission,
   unlockCode,
   unlockCodeError,
+  extraSetupOpen,
+  extraSetupMinutes,
+  extraSetupPoints,
+  extraSetupError,
   onStart,
   onUnlockCode,
   onUnlock,
   onCancelUnlock,
+  onExtraSetupMinutes,
+  onExtraSetupPoints,
+  onStartCustomizedExtra,
   onCreateMission,
   onDeleteMission,
   onResetMap,
@@ -1403,10 +1437,17 @@ function HomeView({
   lockedMission: Mission | null;
   unlockCode: string;
   unlockCodeError: string;
+  extraSetupOpen: boolean;
+  extraSetupMinutes: string;
+  extraSetupPoints: string;
+  extraSetupError: string;
   onStart: (mission: Mission) => void;
   onUnlockCode: (value: string) => void;
   onUnlock: () => void;
   onCancelUnlock: () => void;
+  onExtraSetupMinutes: (value: string) => void;
+  onExtraSetupPoints: (value: string) => void;
+  onStartCustomizedExtra: () => void;
   onCreateMission: (title: string, durationMinutes: number) => void;
   onDeleteMission: (missionId: string) => void;
   onResetMap: (code: string) => boolean;
@@ -1478,7 +1519,7 @@ function HomeView({
 
       <section className="section-block">
         <div className="section-heading"><div><h2>اختر مهمة كاملة</h2><p>كل مهمة تفتح جزءاً جديداً من الخريطة.</p></div><span className="eyebrow">محطات اليوم</span></div>
-        {lockedMission && (
+        {lockedMission && !extraSetupOpen && (
           <section className="challenge-unlock-card" data-testid="panel-extra-challenge-lock">
             <div className="challenge-unlock-icon"><LockKeyhole size={23} /></div>
             <div>
@@ -1492,6 +1533,26 @@ function HomeView({
               <div className="challenge-unlock-actions">
                 <button className="primary-button" type="submit" data-testid="button-unlock-extra-challenge"><KeyRound size={16} /> فتح التحدي</button>
                 <button className="outline-button" type="button" data-testid="button-cancel-extra-challenge-unlock" onClick={onCancelUnlock}><ArrowLeft size={16} /> العودة للمهام</button>
+              </div>
+            </form>
+          </section>
+        )}
+        {lockedMission && extraSetupOpen && (
+          <section className="challenge-unlock-card extra-challenge-setup-card" data-testid="panel-extra-challenge-setup">
+            <div className="challenge-unlock-icon"><TimerReset size={23} /></div>
+            <div>
+              <strong>تم فتح «{lockedMission.title}»</strong>
+              <p>اختر الوقت وعدد النقاط التي سيحصل عليها البطل قبل بدء التحدي.</p>
+            </div>
+            <form onSubmit={(event) => { event.preventDefault(); onStartCustomizedExtra(); }}>
+              <div className="extra-setup-fields">
+                <label><span>الوقت بالدقائق</span><input data-testid="input-unlocked-extra-duration" type="number" min="1" max="120" step="1" value={extraSetupMinutes} onChange={(event) => onExtraSetupMinutes(event.target.value)} /></label>
+                <label><span>النقاط المكتسبة</span><input data-testid="input-unlocked-extra-reward" type="number" min="1" max="50" step="1" value={extraSetupPoints} onChange={(event) => onExtraSetupPoints(event.target.value)} /></label>
+              </div>
+              {extraSetupError && <p className="form-error" data-testid="status-unlocked-extra-error">{extraSetupError}</p>}
+              <div className="challenge-unlock-actions">
+                <button className="primary-button" type="submit" data-testid="button-start-customized-extra"><Play size={16} /> بدء التحدي</button>
+                <button className="outline-button" type="button" data-testid="button-cancel-extra-setup" onClick={onCancelUnlock}><ArrowLeft size={16} /> العودة للمهام</button>
               </div>
             </form>
           </section>

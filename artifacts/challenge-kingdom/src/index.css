@@ -402,6 +402,10 @@
 .challenge-unlock-card form { grid-column: 1 / -1; display: grid; gap: 7px; }
 .challenge-unlock-card label { font-size: 11px; color: rgba(249,240,214,.8); }
 .challenge-unlock-card .code-input { color: hsl(var(--primary-foreground)); background: rgba(11,24,51,.35); border-color: rgba(249,240,214,.32); }
+.extra-challenge-setup-card { border-color: rgba(244,190,57,.75); background: linear-gradient(135deg, hsl(var(--secondary)), #6f3e51); }
+.extra-setup-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.extra-setup-fields label { display: grid; gap: 6px; }
+.extra-setup-fields input { width: 100%; color: hsl(var(--primary-foreground)); background: rgba(11,24,51,.35); border-color: rgba(249,240,214,.32); }
 .challenge-unlock-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 3px; }
 .challenge-unlock-actions .outline-button { color: hsl(var(--primary-foreground)); border-color: rgba(249,240,214,.42); background: transparent; }
 .battle-aside { display: grid; gap: 13px; align-content: start; }
