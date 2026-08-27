@@ -129,7 +129,22 @@ type SavedMission = {
   duration: number;
 };
 
+type ActiveChallenge = {
+  mission: SavedMission;
+  seconds: number;
+  extensionCount: number;
+  pauseUsed: boolean;
+  pauseSeconds: number;
+  pauseEndsAt: number | null;
+  timeUp: boolean;
+  running: boolean;
+  updatedAt: number;
+};
+
+type ActiveChallenges = Partial<Record<ProfileId, ActiveChallenge>>;
+
 const storageKey = "challenge-kingdom-state-v1";
+const activeChallengesKey = "challenge-kingdom-active-v1";
 const mapStages = ["بوابة البيت", "غابة القراءة", "ميدان التحدي", "قلعة الحكمة"];
 const totalStages = mapStages.length;
 const mapTotalPoints = 120;
@@ -156,6 +171,54 @@ function readSavedState(): SavedState {
   } catch {
     return fallback;
   }
+}
+
+function readActiveChallenges(): ActiveChallenges {
+  try {
+    const raw = localStorage.getItem(activeChallengesKey);
+    return raw ? (JSON.parse(raw) as ActiveChallenges) : {};
+  } catch {
+    return {};
+  }
+}
+
+function missionFromSaved(savedMission: SavedMission): Mission {
+  const existing = missions.find((item) => item.id === savedMission.id);
+  return { ...savedMission, icon: existing?.icon ?? PenLine, featured: existing?.featured };
+}
+
+function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
+  if (!challenge) return null;
+  const now = Date.now();
+  let seconds = challenge.seconds;
+  let pauseSeconds = challenge.pauseSeconds;
+  let pauseEndsAt = challenge.pauseEndsAt;
+  let running = challenge.running;
+  let timeUp = challenge.timeUp;
+
+  if (!timeUp && pauseEndsAt) {
+    if (pauseEndsAt > now) {
+      pauseSeconds = Math.ceil((pauseEndsAt - now) / 1000);
+      running = false;
+    } else {
+      seconds = Math.max(0, seconds - Math.floor((now - pauseEndsAt) / 1000));
+      pauseSeconds = 0;
+      pauseEndsAt = null;
+      running = seconds > 0;
+      timeUp = seconds === 0;
+    }
+  } else if (!timeUp && running) {
+    seconds = Math.max(0, seconds - Math.floor((now - challenge.updatedAt) / 1000));
+    running = seconds > 0;
+    timeUp = seconds === 0;
+  }
+
+  return { ...challenge, seconds, pauseSeconds, pauseEndsAt, running, timeUp, updatedAt: now };
+}
+
+function getInitialActiveChallenge() {
+  const saved = readSavedState();
+  return saved.selectedId ? restoreActiveChallenge(readActiveChallenges()[saved.selectedId]) : null;
 }
 
 function formatTime(seconds: number) {
@@ -222,16 +285,24 @@ function getArabicDate() {
 
 function App() {
   const [saved, setSaved] = useState<SavedState>(() => readSavedState());
-  const [screen, setScreen] = useState<Screen>(() => (readSavedState().selectedId ? "home" : "choose"));
+  const [activeChallenges, setActiveChallenges] = useState<ActiveChallenges>(() => readActiveChallenges());
+  const [screen, setScreen] = useState<Screen>(() => {
+    const state = readSavedState();
+    return state.selectedId ? (getInitialActiveChallenge() ? "quest" : "home") : "choose";
+  });
   const [tab, setTab] = useState<Tab>("quest");
   const [selectedId, setSelectedId] = useState<ProfileId | null>(() => readSavedState().selectedId);
-  const [mission, setMission] = useState<Mission | null>(null);
-  const [seconds, setSeconds] = useState(0);
-  const [timerRunning, setTimerRunning] = useState(false);
-  const [timeUp, setTimeUp] = useState(false);
-  const [pauseUsed, setPauseUsed] = useState(false);
-  const [pauseSeconds, setPauseSeconds] = useState(0);
-  const [extensionCount, setExtensionCount] = useState(0);
+  const [mission, setMission] = useState<Mission | null>(() => {
+    const active = getInitialActiveChallenge();
+    return active ? missionFromSaved(active.mission) : null;
+  });
+  const [seconds, setSeconds] = useState(() => getInitialActiveChallenge()?.seconds ?? 0);
+  const [timerRunning, setTimerRunning] = useState(() => getInitialActiveChallenge()?.running ?? false);
+  const [timeUp, setTimeUp] = useState(() => getInitialActiveChallenge()?.timeUp ?? false);
+  const [pauseUsed, setPauseUsed] = useState(() => getInitialActiveChallenge()?.pauseUsed ?? false);
+  const [pauseSeconds, setPauseSeconds] = useState(() => getInitialActiveChallenge()?.pauseSeconds ?? 0);
+  const [pauseEndsAt, setPauseEndsAt] = useState<number | null>(() => getInitialActiveChallenge()?.pauseEndsAt ?? null);
+  const [extensionCount, setExtensionCount] = useState(() => getInitialActiveChallenge()?.extensionCount ?? 0);
   const [finishCodeOpen, setFinishCodeOpen] = useState(false);
   const [finishCode, setFinishCode] = useState("");
   const [finishCodeError, setFinishCodeError] = useState("");
@@ -254,7 +325,11 @@ function App() {
   }, [saved, selectedId]);
 
   useEffect(() => {
-    if (!timerRunning || screen !== "quest") return;
+    localStorage.setItem(activeChallengesKey, JSON.stringify(activeChallenges));
+  }, [activeChallenges]);
+
+  useEffect(() => {
+    if (!timerRunning) return;
     const tick = window.setInterval(() => {
       setSeconds((current) => {
         if (current <= 1) {
@@ -267,13 +342,14 @@ function App() {
       });
     }, 1000);
     return () => window.clearInterval(tick);
-  }, [timerRunning, screen]);
+  }, [timerRunning]);
 
   useEffect(() => {
-    if (pauseSeconds <= 0 || screen !== "quest") return;
+    if (pauseSeconds <= 0) return;
     const pauseTick = window.setInterval(() => {
       setPauseSeconds((current) => {
         if (current <= 1) {
+          setPauseEndsAt(null);
           setTimerRunning(true);
           return 0;
         }
@@ -281,23 +357,50 @@ function App() {
       });
     }, 1000);
     return () => window.clearInterval(pauseTick);
-  }, [pauseSeconds, screen]);
+  }, [pauseSeconds]);
+
+  useEffect(() => {
+    if (pauseSeconds === 5) playSound("bell");
+  }, [pauseSeconds]);
+
+  useEffect(() => {
+    if (!selectedId || !mission) return;
+    const persisted: ActiveChallenge = {
+      mission: { id: mission.id, title: mission.title, description: mission.description, duration: mission.duration },
+      seconds,
+      extensionCount,
+      pauseUsed,
+      pauseSeconds,
+      pauseEndsAt,
+      timeUp,
+      running: timerRunning,
+      updatedAt: Date.now(),
+    };
+    setActiveChallenges((current) => ({ ...current, [selectedId]: persisted }));
+  }, [selectedId, mission, seconds, extensionCount, pauseUsed, pauseSeconds, pauseEndsAt, timeUp, timerRunning]);
 
   const chooseProfile = (id: ProfileId) => {
+    const active = restoreActiveChallenge(activeChallenges[id]);
     setSelectedId(id);
     setTab("quest");
-    setScreen("home");
-    setMission(null);
-    setTimerRunning(false);
-    setTimeUp(false);
+    setScreen(active ? "quest" : "home");
+    setMission(active ? missionFromSaved(active.mission) : null);
+    setSeconds(active?.seconds ?? 0);
+    setTimerRunning(active?.running ?? false);
+    setTimeUp(active?.timeUp ?? false);
     setFinishCodeOpen(false);
-    setPauseUsed(false);
-    setPauseSeconds(0);
-    setExtensionCount(0);
+    setPauseUsed(active?.pauseUsed ?? false);
+    setPauseSeconds(active?.pauseSeconds ?? 0);
+    setPauseEndsAt(active?.pauseEndsAt ?? null);
+    setExtensionCount(active?.extensionCount ?? 0);
   };
 
   const startMission = (nextMission: Mission) => {
     if (points >= mapFinishPoints) return;
+    if (mission && !pointResult) {
+      if (mission.id === nextMission.id) setScreen("quest");
+      return;
+    }
     setMission(nextMission);
     setSeconds(nextMission.duration);
     setTimerRunning(false);
@@ -309,6 +412,7 @@ function App() {
     setPointResult(null);
     setPauseUsed(false);
     setPauseSeconds(0);
+    setPauseEndsAt(null);
     setExtensionCount(0);
     playSound("start");
     setScreen("quest");
@@ -322,6 +426,7 @@ function App() {
     setFinishCode("");
     setFinishCodeError("");
     setExtensionCount((count) => count + 1);
+    setPauseEndsAt(null);
     setTimerRunning(true);
   };
 
@@ -330,6 +435,7 @@ function App() {
     setTimerRunning(false);
     setPauseUsed(true);
     setPauseSeconds(120);
+    setPauseEndsAt(Date.now() + 120_000);
   };
 
   const verifyFinishCode = () => {
@@ -358,6 +464,11 @@ function App() {
         completed: { ...current.completed, [profile.id]: Math.min(totalStages, current.completed[profile.id] + 1) },
         points: { ...current.points, [profile.id]: total },
       }));
+      setActiveChallenges((current) => {
+        const next = { ...current };
+        delete next[profile.id];
+        return next;
+      });
       setScreen("reward");
       return;
     }
@@ -376,9 +487,27 @@ function App() {
     setAnswerResult(null);
     setPauseUsed(false);
     setPauseSeconds(0);
+    setPauseEndsAt(null);
     setExtensionCount(0);
+    if (selectedId) {
+      setActiveChallenges((current) => {
+        const next = { ...current };
+        delete next[selectedId];
+        return next;
+      });
+    }
     setScreen("home");
     setTab("quest");
+  };
+
+  const leaveMission = () => {
+    setScreen("home");
+    setTab("quest");
+  };
+
+  const returnToQuest = () => {
+    setTab("quest");
+    setScreen(mission && !pointResult ? "quest" : "home");
   };
 
   const createMission = (title: string, durationMinutes: number) => {
@@ -439,7 +568,7 @@ function App() {
           </div>
           <div className="side-section-label">رحلة اليوم</div>
           <nav className="side-nav">
-            <button data-testid="nav-quest" className={tab === "quest" ? "active" : ""} onClick={() => { setTab("quest"); setScreen("home"); }}>
+            <button data-testid="nav-quest" className={tab === "quest" ? "active" : ""} onClick={returnToQuest}>
               <House size={17} /> <span>ساحة المغامرة</span>
             </button>
             <button data-testid="nav-parent" className={tab === "parent" ? "active" : ""} onClick={() => { setTab("parent"); setScreen("home"); }}>
@@ -475,11 +604,11 @@ function App() {
             {tab === "parent" && screen === "home" ? (
               <ParentView saved={saved} onChooseProfile={() => setScreen("choose")} />
             ) : screen === "home" ? (
-              <HomeView profile={activeProfile} completed={completed} points={points} missions={profileMissions} onStart={startMission} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
+              <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={startMission} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
-              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} pauseUsed={pauseUsed} pauseSeconds={pauseSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={newChallenge} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
+              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} pauseUsed={pauseUsed} pauseSeconds={pauseSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
-              <GateView answerResult={answerResult} onAnswer={answerMission} onBack={newChallenge} />
+              <GateView answerResult={answerResult} onAnswer={answerMission} onBack={leaveMission} />
             ) : (
               <RewardView result={pointResult} profileName={activeProfile.name} onNew={newChallenge} />
             )}
@@ -487,7 +616,7 @@ function App() {
         </main>
       </div>
       <nav className="mobile-nav" aria-label="التنقل">
-        <button data-testid="mobile-nav-quest" className={tab === "quest" ? "active" : ""} onClick={() => { setTab("quest"); setScreen("home"); }}><House size={18} /><span>المغامرة</span></button>
+        <button data-testid="mobile-nav-quest" className={tab === "quest" ? "active" : ""} onClick={returnToQuest}><House size={18} /><span>المغامرة</span></button>
         <button data-testid="mobile-nav-parent" className={tab === "parent" ? "active" : ""} onClick={() => { setTab("parent"); setScreen("home"); }}><Users size={18} /><span>الوالدان</span></button>
         <button data-testid="mobile-nav-profile" onClick={() => setScreen("choose")}><UserRound size={18} /><span>الأبطال</span></button>
       </nav>
@@ -532,6 +661,7 @@ function HomeView({
   profile,
   completed,
   points,
+  activeMission,
   missions: availableMissions,
   onStart,
   onCreateMission,
@@ -542,6 +672,7 @@ function HomeView({
   profile: Profile;
   completed: number;
   points: number;
+  activeMission: Mission | null;
   missions: Mission[];
   onStart: (mission: Mission) => void;
   onCreateMission: (title: string, durationMinutes: number) => void;
@@ -591,7 +722,7 @@ function HomeView({
               <div className="eyebrow">الفصل الثالث • المهمة اليومية</div>
               <h1 className="display-title">مرحباً يا {profile.name}</h1>
               <p className="subtle">الملل يقترب من أسوار المملكة. هل تفتح صفحة جديدة وتدافع عن كنز المعرفة؟</p>
-               <button className="primary-button gold hero-cta" data-testid="button-start-featured" onClick={() => onStart(availableMissions[0])} disabled={points >= mapFinishPoints}>{points >= mapFinishPoints ? "اكتملت المرحلة" : <>ابدأ المهمة <ArrowLeft size={16} /></>}</button>
+               <button className="primary-button gold hero-cta" data-testid="button-start-featured" onClick={() => onStart(activeMission ?? availableMissions[0])} disabled={points >= mapFinishPoints}>{points >= mapFinishPoints ? "اكتملت المرحلة" : activeMission ? <>استأنف التحدي <Play size={16} /></> : <>ابدأ المهمة <ArrowLeft size={16} /></>}</button>
             </div>
             <div className="hero-figure" aria-hidden="true"><div className="cape" /><div className="hero-head" /><div className="hero-shield"><Shield size={19} /></div><Sparkles className="hero-spark one" size={19} /><Star className="hero-spark two" size={16} fill="currentColor" /></div>
           </div>
@@ -630,7 +761,7 @@ function HomeView({
         <div className="missions-grid">
              {availableMissions.map((item) => {
             const Icon = item.icon;
-               const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} onClick={() => onStart(item)} disabled={points >= mapFinishPoints}>
+               const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} onClick={() => onStart(item)} disabled={points >= mapFinishPoints || Boolean(activeMission && activeMission.id !== item.id)}>
                  <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span></div>
                  <h3>{item.title}</h3><p>{item.description}</p><ArrowLeft className="mission-arrow" size={18} />
                </button>;
