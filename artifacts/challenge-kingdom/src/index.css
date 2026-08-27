@@ -115,6 +115,10 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(234, 75, 94, .18); }
   50% { box-shadow: 0 0 0 14px rgba(234, 75, 94, 0); }
 }
+@keyframes alert-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 190, 57, .32); }
+  50% { box-shadow: 0 0 0 20px rgba(244, 190, 57, 0); }
+}
 @keyframes shimmer {
   from { background-position: 100% 0; }
   to { background-position: -100% 0; }
@@ -354,6 +358,8 @@
 .timer-shell.running { animation: pulse-ring 2.3s infinite; }
 .timer-shell.paused { animation: pulse-ring 2.3s infinite; }
 .timer-shell.paused .timer-label { color: #ffcf4a; }
+.timer-shell.alerting { animation: alert-ring .8s ease-in-out infinite; }
+.timer-shell.alerting .timer-label { color: #ffd45a; font-weight: 900; }
 .quest-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; }
 .quest-note { margin: 17px 0 0; color: rgba(249,240,214,.52); font-size: 11px; }
 .quest-note.pause-note { color: #ffcf4a; font-weight: 800; }
@@ -392,6 +398,8 @@
 .answer-result strong { font-size: 14px; }
 .answer-result span { font-size: 11px; color: hsl(var(--muted-foreground)); }
 .failure-result { color: hsl(var(--destructive)); background: rgba(191,77,58,.09); border: 1px solid rgba(191,77,58,.2); }
+.cancel-mission-button { color: hsl(var(--destructive)); border-color: rgba(191,77,58,.35); }
+.cancel-mission-button:hover { background: rgba(191,77,58,.1); }
 .map-complete { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 22px; padding: 12px 14px; border-radius: 13px; background: rgba(249,240,214,.67); border: 1px solid rgba(117,97,57,.2); }
 .map-complete strong, .map-complete span { display: block; }
 .map-complete strong { color: #6b5b3b; font-size: 12px; }

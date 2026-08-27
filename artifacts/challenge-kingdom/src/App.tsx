@@ -133,12 +133,17 @@ type ActiveChallenge = {
   mission: SavedMission;
   seconds: number;
   extensionCount: number;
-  pauseUsed: boolean;
   pauseSeconds: number;
+  pauseActive?: boolean;
   pauseEndsAt: number | null;
   timeUp: boolean;
+  alertSeconds?: number;
+  alertEndsAt?: number | null;
+  approvalStatus?: "gate" | "rejected";
   running: boolean;
   updatedAt: number;
+  /** Retained only to restore challenges saved by the previous pause rule. */
+  pauseUsed?: boolean;
 };
 
 type ActiveChallenges = Partial<Record<ProfileId, ActiveChallenge>>;
@@ -149,6 +154,8 @@ const mapStages = ["بوابة البيت", "غابة القراءة", "ميدا
 const totalStages = mapStages.length;
 const mapTotalPoints = 120;
 const mapFinishPoints = 100;
+const pauseBudgetSeconds = 120;
+const timeUpAlertSeconds = 15;
 
 function readSavedState(): SavedState {
   const fallback: SavedState = {
@@ -191,18 +198,22 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
   if (!challenge) return null;
   const now = Date.now();
   let seconds = challenge.seconds;
-  let pauseSeconds = challenge.pauseSeconds;
+  let pauseSeconds = typeof challenge.pauseSeconds === "number" ? challenge.pauseSeconds : (challenge.pauseUsed ? 0 : pauseBudgetSeconds);
+  let pauseActive = challenge.pauseActive ?? Boolean(challenge.pauseEndsAt);
   let pauseEndsAt = challenge.pauseEndsAt;
   let running = challenge.running;
   let timeUp = challenge.timeUp;
+  let alertSeconds = challenge.alertSeconds ?? 0;
+  let alertEndsAt = challenge.alertEndsAt ?? null;
 
-  if (!timeUp && pauseEndsAt) {
+  if (!timeUp && pauseActive && pauseEndsAt) {
     if (pauseEndsAt > now) {
       pauseSeconds = Math.ceil((pauseEndsAt - now) / 1000);
       running = false;
     } else {
       seconds = Math.max(0, seconds - Math.floor((now - pauseEndsAt) / 1000));
       pauseSeconds = 0;
+      pauseActive = false;
       pauseEndsAt = null;
       running = seconds > 0;
       timeUp = seconds === 0;
@@ -213,7 +224,17 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
     timeUp = seconds === 0;
   }
 
-  return { ...challenge, seconds, pauseSeconds, pauseEndsAt, running, timeUp, updatedAt: now };
+  if (timeUp && alertEndsAt && alertEndsAt > now) {
+    alertSeconds = Math.ceil((alertEndsAt - now) / 1000);
+  } else if (timeUp && !alertSeconds) {
+    alertSeconds = timeUpAlertSeconds;
+    alertEndsAt = now + timeUpAlertSeconds * 1000;
+  } else {
+    alertSeconds = 0;
+    alertEndsAt = null;
+  }
+
+  return { ...challenge, seconds, pauseSeconds, pauseActive, pauseEndsAt, timeUp, alertSeconds, alertEndsAt, running, updatedAt: now };
 }
 
 function getInitialActiveChallenge() {
@@ -239,7 +260,15 @@ function pointsForExtensions(extensionCount: number) {
   return 1;
 }
 
-function playSound(kind: "start" | "bell" | "success" | "failure") {
+function extensionDuration(originalDuration: number, extensionCount: number) {
+  let duration = originalDuration;
+  for (let count = 0; count < extensionCount; count += 1) {
+    duration = Math.max(1, Math.round(duration * (2 / 3)));
+  }
+  return duration;
+}
+
+function playSound(kind: "click" | "start" | "bell" | "alarm" | "success" | "failure") {
   const AudioContextConstructor =
     window.AudioContext ??
     (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -247,10 +276,20 @@ function playSound(kind: "start" | "bell" | "success" | "failure") {
 
   const context = new AudioContextConstructor();
   const notes =
-    kind === "start"
+    kind === "click"
+      ? [{ frequency: 590, delay: 0, length: 0.055 }]
+      : kind === "start"
       ? [{ frequency: 392, delay: 0, length: 0.14 }, { frequency: 523, delay: 0.16, length: 0.2 }]
       : kind === "bell"
       ? [{ frequency: 880, delay: 0, length: 0.22 }, { frequency: 660, delay: 0.24, length: 0.34 }]
+      : kind === "alarm"
+        ? [
+            ...Array.from({ length: timeUpAlertSeconds }, (_, index) => [
+              { frequency: 880, delay: index, length: 0.19 },
+              { frequency: 660, delay: index + 0.24, length: 0.19 },
+            ]).flat(),
+            { frequency: 880, delay: timeUpAlertSeconds - 0.26, length: 0.25 },
+          ]
       : kind === "success"
         ? [
             { frequency: 523, delay: 0, length: 0.12 },
@@ -276,7 +315,8 @@ function playSound(kind: "start" | "bell" | "success" | "failure") {
     oscillator.start(context.currentTime + delay);
     oscillator.stop(context.currentTime + delay + length + 0.03);
   });
-  window.setTimeout(() => void context.close(), 1200);
+  const finishAfter = Math.max(...notes.map(({ delay, length }) => delay + length), 0) * 1000 + 120;
+  window.setTimeout(() => void context.close(), finishAfter);
 }
 
 function getArabicDate() {
@@ -288,7 +328,8 @@ function App() {
   const [activeChallenges, setActiveChallenges] = useState<ActiveChallenges>(() => readActiveChallenges());
   const [screen, setScreen] = useState<Screen>(() => {
     const state = readSavedState();
-    return state.selectedId ? (getInitialActiveChallenge() ? "quest" : "home") : "choose";
+    const active = getInitialActiveChallenge();
+    return state.selectedId ? (active ? (active.approvalStatus ? "gate" : "quest") : "home") : "choose";
   });
   const [tab, setTab] = useState<Tab>("quest");
   const [selectedId, setSelectedId] = useState<ProfileId | null>(() => readSavedState().selectedId);
@@ -299,14 +340,17 @@ function App() {
   const [seconds, setSeconds] = useState(() => getInitialActiveChallenge()?.seconds ?? 0);
   const [timerRunning, setTimerRunning] = useState(() => getInitialActiveChallenge()?.running ?? false);
   const [timeUp, setTimeUp] = useState(() => getInitialActiveChallenge()?.timeUp ?? false);
-  const [pauseUsed, setPauseUsed] = useState(() => getInitialActiveChallenge()?.pauseUsed ?? false);
-  const [pauseSeconds, setPauseSeconds] = useState(() => getInitialActiveChallenge()?.pauseSeconds ?? 0);
+  const [pauseSeconds, setPauseSeconds] = useState(() => getInitialActiveChallenge()?.pauseSeconds ?? pauseBudgetSeconds);
+  const [pauseActive, setPauseActive] = useState(() => getInitialActiveChallenge()?.pauseActive ?? Boolean(getInitialActiveChallenge()?.pauseEndsAt));
   const [pauseEndsAt, setPauseEndsAt] = useState<number | null>(() => getInitialActiveChallenge()?.pauseEndsAt ?? null);
+  const [alertSeconds, setAlertSeconds] = useState(() => getInitialActiveChallenge()?.alertSeconds ?? 0);
+  const [alertEndsAt, setAlertEndsAt] = useState<number | null>(() => getInitialActiveChallenge()?.alertEndsAt ?? null);
+  const [approvalStatus, setApprovalStatus] = useState<"gate" | "rejected" | null>(() => getInitialActiveChallenge()?.approvalStatus ?? null);
   const [extensionCount, setExtensionCount] = useState(() => getInitialActiveChallenge()?.extensionCount ?? 0);
   const [finishCodeOpen, setFinishCodeOpen] = useState(false);
   const [finishCode, setFinishCode] = useState("");
   const [finishCodeError, setFinishCodeError] = useState("");
-  const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(null);
+  const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => getInitialActiveChallenge()?.approvalStatus === "rejected" ? "no" : null);
   const [pointResult, setPointResult] = useState<{ earned: number; bonus: number; total: number; extensions: number } | null>(null);
 
   const profile = useMemo(() => profiles.find((item) => item.id === selectedId) ?? null, [selectedId]);
@@ -329,13 +373,23 @@ function App() {
   }, [activeChallenges]);
 
   useEffect(() => {
+    const playButtonClick = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest("button:not(:disabled)")) playSound("click");
+    };
+    document.addEventListener("click", playButtonClick, true);
+    return () => document.removeEventListener("click", playButtonClick, true);
+  }, []);
+
+  useEffect(() => {
     if (!timerRunning) return;
     const tick = window.setInterval(() => {
       setSeconds((current) => {
         if (current <= 1) {
           setTimerRunning(false);
           setTimeUp(true);
-          playSound("bell");
+            setAlertSeconds(timeUpAlertSeconds);
+            setAlertEndsAt(Date.now() + timeUpAlertSeconds * 1000);
+            playSound("alarm");
           return 0;
         }
         return current - 1;
@@ -345,10 +399,11 @@ function App() {
   }, [timerRunning]);
 
   useEffect(() => {
-    if (pauseSeconds <= 0) return;
+    if (!pauseActive || pauseSeconds <= 0) return;
     const pauseTick = window.setInterval(() => {
       setPauseSeconds((current) => {
         if (current <= 1) {
+          setPauseActive(false);
           setPauseEndsAt(null);
           setTimerRunning(true);
           return 0;
@@ -357,11 +412,25 @@ function App() {
       });
     }, 1000);
     return () => window.clearInterval(pauseTick);
-  }, [pauseSeconds]);
+  }, [pauseActive, pauseSeconds]);
 
   useEffect(() => {
-    if (pauseSeconds === 5) playSound("bell");
-  }, [pauseSeconds]);
+    if (pauseActive && pauseSeconds === 5) playSound("bell");
+  }, [pauseActive, pauseSeconds]);
+
+  useEffect(() => {
+    if (alertSeconds <= 0) return;
+    const alertTick = window.setInterval(() => {
+      setAlertSeconds((current) => {
+        if (current <= 1) {
+          setAlertEndsAt(null);
+          return 0;
+        }
+        return current - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(alertTick);
+  }, [alertSeconds]);
 
   useEffect(() => {
     if (!selectedId || !mission) return;
@@ -369,29 +438,36 @@ function App() {
       mission: { id: mission.id, title: mission.title, description: mission.description, duration: mission.duration },
       seconds,
       extensionCount,
-      pauseUsed,
       pauseSeconds,
+      pauseActive,
       pauseEndsAt,
       timeUp,
+      alertSeconds,
+      alertEndsAt,
+      approvalStatus: approvalStatus ?? undefined,
       running: timerRunning,
       updatedAt: Date.now(),
     };
     setActiveChallenges((current) => ({ ...current, [selectedId]: persisted }));
-  }, [selectedId, mission, seconds, extensionCount, pauseUsed, pauseSeconds, pauseEndsAt, timeUp, timerRunning]);
+  }, [selectedId, mission, seconds, extensionCount, pauseSeconds, pauseActive, pauseEndsAt, timeUp, alertSeconds, alertEndsAt, approvalStatus, timerRunning]);
 
   const chooseProfile = (id: ProfileId) => {
     const active = restoreActiveChallenge(activeChallenges[id]);
     setSelectedId(id);
     setTab("quest");
-    setScreen(active ? "quest" : "home");
+    setScreen(active ? (active.approvalStatus ? "gate" : "quest") : "home");
     setMission(active ? missionFromSaved(active.mission) : null);
     setSeconds(active?.seconds ?? 0);
     setTimerRunning(active?.running ?? false);
     setTimeUp(active?.timeUp ?? false);
     setFinishCodeOpen(false);
-    setPauseUsed(active?.pauseUsed ?? false);
-    setPauseSeconds(active?.pauseSeconds ?? 0);
+    setPauseSeconds(active?.pauseSeconds ?? (active?.pauseUsed ? 0 : pauseBudgetSeconds));
+    setPauseActive(active?.pauseActive ?? Boolean(active?.pauseEndsAt));
     setPauseEndsAt(active?.pauseEndsAt ?? null);
+    setAlertSeconds(active?.alertSeconds ?? 0);
+    setAlertEndsAt(active?.alertEndsAt ?? null);
+    setApprovalStatus(active?.approvalStatus ?? null);
+    setAnswerResult(active?.approvalStatus === "rejected" ? "no" : null);
     setExtensionCount(active?.extensionCount ?? 0);
   };
 
@@ -410,32 +486,43 @@ function App() {
     setFinishCodeError("");
     setAnswerResult(null);
     setPointResult(null);
-    setPauseUsed(false);
-    setPauseSeconds(0);
+    setPauseSeconds(pauseBudgetSeconds);
+    setPauseActive(false);
     setPauseEndsAt(null);
+    setAlertSeconds(0);
+    setAlertEndsAt(null);
+    setApprovalStatus(null);
     setExtensionCount(0);
     playSound("start");
     setScreen("quest");
   };
 
   const extendMission = () => {
-    if (!mission) return;
-    setSeconds(mission.duration);
+    if (!mission || alertSeconds > 0) return;
+    const nextCount = extensionCount + 1;
+    setSeconds(extensionDuration(mission.duration, nextCount));
     setTimeUp(false);
     setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
-    setExtensionCount((count) => count + 1);
-    setPauseEndsAt(null);
+    setExtensionCount(nextCount);
+    setAlertSeconds(0);
+    setAlertEndsAt(null);
     setTimerRunning(true);
   };
 
   const pauseMission = () => {
-    if (!mission || !timerRunning || pauseUsed || timeUp) return;
+    if (!mission || !timerRunning || pauseSeconds <= 0 || timeUp) return;
     setTimerRunning(false);
-    setPauseUsed(true);
-    setPauseSeconds(120);
-    setPauseEndsAt(Date.now() + 120_000);
+    setPauseActive(true);
+    setPauseEndsAt(Date.now() + pauseSeconds * 1000);
+  };
+
+  const resumeMission = () => {
+    if (!mission || !pauseActive || seconds <= 0) return;
+    setPauseActive(false);
+    setPauseEndsAt(null);
+    setTimerRunning(true);
   };
 
   const verifyFinishCode = () => {
@@ -445,6 +532,7 @@ function App() {
     }
     setFinishCodeError("");
     setAnswerResult(null);
+    setApprovalStatus("gate");
     setScreen("gate");
   };
 
@@ -469,11 +557,22 @@ function App() {
         delete next[profile.id];
         return next;
       });
+      setApprovalStatus(null);
       setScreen("reward");
       return;
     }
     playSound("failure");
     setAnswerResult("no");
+    setApprovalStatus("rejected");
+  };
+
+  const cancelUnfinishedMission = () => {
+    if (!profile) return;
+    setSaved((current) => ({
+      ...current,
+      points: { ...current.points, [profile.id]: current.points[profile.id] - 2 },
+    }));
+    newChallenge();
   };
 
   const newChallenge = () => {
@@ -485,9 +584,12 @@ function App() {
     setFinishCode("");
     setFinishCodeError("");
     setAnswerResult(null);
-    setPauseUsed(false);
-    setPauseSeconds(0);
+    setPauseSeconds(pauseBudgetSeconds);
+    setPauseActive(false);
     setPauseEndsAt(null);
+    setAlertSeconds(0);
+    setAlertEndsAt(null);
+    setApprovalStatus(null);
     setExtensionCount(0);
     if (selectedId) {
       setActiveChallenges((current) => {
@@ -507,7 +609,7 @@ function App() {
 
   const returnToQuest = () => {
     setTab("quest");
-    setScreen(mission && !pointResult ? "quest" : "home");
+    setScreen(mission && !pointResult ? (approvalStatus ? "gate" : "quest") : "home");
   };
 
   const createMission = (title: string, durationMinutes: number) => {
@@ -606,9 +708,9 @@ function App() {
             ) : screen === "home" ? (
               <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={startMission} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
-              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} pauseUsed={pauseUsed} pauseSeconds={pauseSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
+              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} alertSeconds={alertSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
-              <GateView answerResult={answerResult} onAnswer={answerMission} onBack={leaveMission} />
+              <GateView answerResult={answerResult} onAnswer={answerMission} onBack={leaveMission} onCancel={cancelUnfinishedMission} />
             ) : (
               <RewardView result={pointResult} profileName={activeProfile.name} onNew={newChallenge} />
             )}
@@ -781,7 +883,7 @@ function HomeView({
               return <div className={`map-node ${done ? "done" : current ? "current" : ""}`} key={stage}><div className="node-disc">{done ? <Check size={21} /> : current ? <Swords size={20} /> : <LockKeyhole size={18} />}</div><div className="node-text">{stage}</div><div className="node-caption">{done ? "عبرت بنجاح" : current ? "أنت هنا" : "قريباً"}</div></div>;
             })}
           </div>
-            <div className="map-points-summary"><strong>{points} / {mapTotalPoints}</strong><span>نقطة في خريطة {profile.name}</span><div className="map-points-track"><i style={{ width: `${Math.min(100, (points / mapTotalPoints) * 100)}%` }} /></div></div>
+            <div className="map-points-summary"><strong>{points} / {mapTotalPoints}</strong><span>نقطة في خريطة {profile.name}</span><div className="map-points-track"><i style={{ width: `${Math.max(0, Math.min(100, (points / mapTotalPoints) * 100))}%` }} /></div></div>
             {points >= mapFinishPoints && <div className="map-complete">
               <div><strong>فاز {profile.name} بالمرحلة الأخيرة!</strong><span>أدخل رمز القائد لإعادة الرحلة إلى المرحلة الأولى.</span></div>
               <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={resetCode} onChange={(event) => setResetCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={submitMapReset}><RotateCcw size={15} /> إعادة الخريطة</button></div>
@@ -798,14 +900,17 @@ function QuestView({
   seconds,
   running,
   timeUp,
-  pauseUsed,
+  extensionCount,
+  pauseActive,
   pauseSeconds,
+  alertSeconds,
   finishCodeOpen,
   finishCode,
   error,
   onBack,
   onStartTimer,
   onPause,
+  onResume,
   onExtend,
   onOpenFinishCode,
   onCode,
@@ -815,14 +920,17 @@ function QuestView({
   seconds: number;
   running: boolean;
   timeUp: boolean;
-  pauseUsed: boolean;
+  extensionCount: number;
+  pauseActive: boolean;
   pauseSeconds: number;
+  alertSeconds: number;
   finishCodeOpen: boolean;
   finishCode: string;
   error: string;
   onBack: () => void;
   onStartTimer: () => void;
   onPause: () => void;
+  onResume: () => void;
   onExtend: () => void;
   onOpenFinishCode: () => void;
   onCode: (value: string) => void;
@@ -830,22 +938,23 @@ function QuestView({
 }) {
   const Icon = mission.icon;
   const progress = mission.duration ? ((mission.duration - seconds) / mission.duration) * 100 : 0;
+  const nextExtensionSeconds = extensionDuration(mission.duration, extensionCount + 1);
   return (
     <>
       <div className="quest-header"><button className="back-button" data-testid="button-back-to-missions" aria-label="العودة للمهام" onClick={onBack}><ArrowLeft size={18} /></button><div><div className="eyebrow">ميدان التحدي</div><p className="subtle">أثبت أن تركيزك أقوى من الملل.</p></div></div>
       <div className="quest-layout">
         <section className="quest-card" data-testid="panel-active-quest">
           <div className="eyebrow"><Icon size={14} /> المهمة النشطة</div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
-          <div className={`timer-shell ${running ? "running" : ""} ${pauseSeconds > 0 ? "paused" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{formatTime(seconds)}</span><span className="timer-label">{pauseSeconds > 0 ? `استراحة ${formatTime(pauseSeconds)}` : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
+           <div className={`timer-shell ${running ? "running" : ""} ${pauseActive ? "paused" : ""} ${alertSeconds > 0 ? "alerting" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{formatTime(seconds)}</span><span className="timer-label">{pauseActive ? `استراحة ${formatTime(pauseSeconds)}` : alertSeconds > 0 ? `تنبيه النهاية ${formatTime(alertSeconds)}` : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
           <div className="quest-actions">
-             {running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseUsed}>{pauseUsed ? <><Pause size={16} /> تم استخدام الإيقاف</> : <><Pause size={16} /> إيقاف لمدة دقيقتين</>}</button> : <button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || pauseSeconds > 0}><Play size={16} /> {pauseSeconds > 0 ? "الاستراحة جارية" : "ابدأ العدّاد"}</button>}
+              {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume}><Play size={16} /> استئناف التحدي</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>}
           </div>
-            {!timeUp ? <p className={`quest-note ${pauseSeconds > 0 ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseSeconds > 0 ? "استراحة الدقيقتين جارية، وسيستأنف العدّاد تلقائياً." : pauseUsed ? "تم استخدام الإيقاف الوحيد، ولا يمكن إيقاف العدّاد مرة أخرى." : "يتوفر إيقاف واحد فقط لمدة دقيقتين."}</p> : (
+             {!timeUp ? <p className={`quest-note ${pauseActive ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseActive ? `الاستراحة جارية. يمكنك الاستئناف الآن أو استخدام ما تبقى من الرصيد لاحقاً.` : pauseSeconds > 0 ? `رصيد الاستراحة المتبقي: ${formatTime(pauseSeconds)} من أصل دقيقتين.` : "اكتمل رصيد الاستراحة لهذه المهمة."}</p> : (
              <div className="time-up-panel" data-testid="panel-time-up">
-               <div className="time-up-heading"><BellRing size={20} /><strong>انتهى وقت المعركة!</strong><span>سمعنا الجرس. اختر الخطوة التالية.</span></div>
+                <div className="time-up-heading"><BellRing size={20} /><strong>انتهى وقت المعركة!</strong><span>{alertSeconds > 0 ? `تنبيه النهاية جارٍ لمدة ${formatTime(alertSeconds)}. انتظر قبل التمديد.` : "انتهى التنبيه. اختر الخطوة التالية."}</span></div>
                {!finishCodeOpen ? (
                  <div className="time-up-actions">
-                   <button className="primary-button gold" data-testid="button-extend-time" onClick={onExtend}><TimerReset size={16} /> تمديد الوقت نفسه</button>
+                    <button className="primary-button gold" data-testid="button-extend-time" onClick={onExtend} disabled={alertSeconds > 0}><TimerReset size={16} /> تمديد لمدة {formatDuration(nextExtensionSeconds)}</button>
                    <button className="outline-button" data-testid="button-open-finish-code" onClick={onOpenFinishCode}><KeyRound size={16} /> إنهاء المهمة</button>
                  </div>
                ) : (
@@ -861,14 +970,14 @@ function QuestView({
         </section>
         <aside className="battle-aside">
           <div className="monster-card"><h3>العدو: ملل</h3><p>يحب أن يهمس: «اترك الصفحة الآن». لا تمنحه هذه الفرصة.</p><div className="monster"><div className="monster-eyes"><span>•</span><span>•</span></div><div className="monster-mouth" /></div></div>
-          <div className="rule-card"><h3>قواعد الميدان</h3><div className="rule"><ShieldCheck size={14} /><span>ضع أدواتك أمامك قبل بدء العدّاد.</span></div><div className="rule"><TimerReset size={14} /><span>إيقاف واحد فقط لمدة دقيقتين، ثم يستأنف العدّاد تلقائياً.</span></div><div className="rule"><Trophy size={14} /><span>النقاط تُحتسب بعد موافقة ولي الأمر.</span></div></div>
+          <div className="rule-card"><h3>قواعد الميدان</h3><div className="rule"><ShieldCheck size={14} /><span>ضع أدواتك أمامك قبل بدء العدّاد.</span></div><div className="rule"><TimerReset size={14} /><span>رصيد الاستراحة دقيقتان ويمكن تقسيمه على عدة إيقافات.</span></div><div className="rule"><Trophy size={14} /><span>النقاط تُحتسب بعد موافقة ولي الأمر.</span></div></div>
         </aside>
       </div>
     </>
   );
 }
 
-function GateView({ answerResult, onAnswer, onBack }: { answerResult: "yes" | "no" | null; onAnswer: (answer: "yes" | "no") => void; onBack: () => void }) {
+function GateView({ answerResult, onAnswer, onBack, onCancel }: { answerResult: "yes" | "no" | null; onAnswer: (answer: "yes" | "no") => void; onBack: () => void; onCancel: () => void }) {
   return (
     <section className="gate-card">
       <div className="gate-seal"><LockKeyhole size={34} /></div>
@@ -878,7 +987,10 @@ function GateView({ answerResult, onAnswer, onBack }: { answerResult: "yes" | "n
           <h1 data-testid="heading-parent-gate">تبقى المرحلة مكانها</h1>
           <p>لم يتم اعتماد الإنجاز هذه المرة. لا مشكلة، يمكنك العودة والمحاولة في تحدٍ جديد عندما تكون المهمة جاهزة.</p>
           <div className="answer-result failure-result"><CircleX size={25} /><strong>لا يوجد تقدم على الخريطة</strong><span>شغّلنا موسيقى الفشل حتى تعرف أن المرحلة لم تُفتح.</span></div>
-          <button className="primary-button" data-testid="button-return-after-failure" onClick={onBack}><Map size={16} /> العودة إلى الخريطة</button>
+          <div className="answer-actions">
+            <button className="primary-button" data-testid="button-return-after-failure" onClick={onBack}><Map size={16} /> العودة إلى الخريطة</button>
+            <button className="outline-button cancel-mission-button" data-testid="button-cancel-unfinished-mission" onClick={onCancel}><CircleX size={16} /> إلغاء المهمة وخصم نقطتين</button>
+          </div>
         </>
       ) : (
         <>
