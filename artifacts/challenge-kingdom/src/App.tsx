@@ -31,6 +31,8 @@ import {
   Trophy,
   UserRound,
   Users,
+  Volume2,
+  VolumeX,
   type LucideIcon,
 } from "lucide-react";
 
@@ -129,6 +131,11 @@ type SavedMission = {
   duration: number;
 };
 
+type SoundPreferences = {
+  enabled: boolean;
+  volume: number;
+};
+
 type ActiveChallenge = {
   mission: SavedMission;
   seconds: number;
@@ -150,6 +157,8 @@ type ActiveChallenges = Partial<Record<ProfileId, ActiveChallenge>>;
 
 const storageKey = "challenge-kingdom-state-v1";
 const activeChallengesKey = "challenge-kingdom-active-v1";
+const soundPreferencesKey = "challenge-kingdom-sound-v1";
+const defaultSoundPreferences: SoundPreferences = { enabled: true, volume: 0.55 };
 const mapStages = ["بوابة البيت", "غابة القراءة", "ميدان التحدي", "قلعة الحكمة"];
 const totalStages = mapStages.length;
 const mapTotalPoints = 120;
@@ -186,6 +195,20 @@ function readActiveChallenges(): ActiveChallenges {
     return raw ? (JSON.parse(raw) as ActiveChallenges) : {};
   } catch {
     return {};
+  }
+}
+
+function readSoundPreferences(): SoundPreferences {
+  try {
+    const raw = localStorage.getItem(soundPreferencesKey);
+    if (!raw) return defaultSoundPreferences;
+    const parsed = JSON.parse(raw) as Partial<SoundPreferences>;
+    return {
+      enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : defaultSoundPreferences.enabled,
+      volume: typeof parsed.volume === "number" ? Math.min(1, Math.max(0, parsed.volume)) : defaultSoundPreferences.volume,
+    };
+  } catch {
+    return defaultSoundPreferences;
   }
 }
 
@@ -273,6 +296,18 @@ type SoundKind = "click" | "start" | "bell" | "alarm" | "success" | "failure";
 let audioContext: AudioContext | null = null;
 let audioMasterGain: GainNode | null = null;
 let lastClickAt = 0;
+let soundPreferences = readSoundPreferences();
+
+function applySoundPreferences(preferences: SoundPreferences) {
+  soundPreferences = preferences;
+  if (audioContext && audioMasterGain) {
+    audioMasterGain.gain.setTargetAtTime(
+      preferences.enabled ? preferences.volume : 0,
+      audioContext.currentTime,
+      0.02,
+    );
+  }
+}
 
 function getAudioContext() {
   const AudioContextConstructor =
@@ -283,13 +318,14 @@ function getAudioContext() {
   if (!audioContext || audioContext.state === "closed") {
     audioContext = new AudioContextConstructor();
     audioMasterGain = audioContext.createGain();
-    audioMasterGain.gain.value = 0.9;
+    audioMasterGain.gain.value = soundPreferences.enabled ? soundPreferences.volume : 0;
     audioMasterGain.connect(audioContext.destination);
   }
   return audioContext;
 }
 
 function playSound(kind: SoundKind) {
+  if (!soundPreferences.enabled || soundPreferences.volume <= 0) return;
   const context = getAudioContext();
   const masterGain = audioMasterGain;
   if (!context || !masterGain) return;
@@ -353,6 +389,7 @@ function getArabicDate() {
 
 function App() {
   const [saved, setSaved] = useState<SavedState>(() => readSavedState());
+  const [soundPreferencesState, setSoundPreferencesState] = useState<SoundPreferences>(() => readSoundPreferences());
   const [activeChallenges, setActiveChallenges] = useState<ActiveChallenges>(() => readActiveChallenges());
   const [screen, setScreen] = useState<Screen>(() => {
     const state = readSavedState();
@@ -400,8 +437,18 @@ function App() {
   }, [saved, selectedId]);
 
   useEffect(() => {
+    localStorage.setItem(soundPreferencesKey, JSON.stringify(soundPreferencesState));
+    applySoundPreferences(soundPreferencesState);
+  }, [soundPreferencesState]);
+
+  useEffect(() => {
     localStorage.setItem(activeChallengesKey, JSON.stringify(activeChallenges));
   }, [activeChallenges]);
+
+  const updateSoundPreferences = (next: SoundPreferences) => {
+    setSoundPreferencesState(next);
+    applySoundPreferences(next);
+  };
 
   useEffect(() => {
     const playButtonClick = (event: MouseEvent) => {
@@ -779,7 +826,7 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView saved={saved} onChooseProfile={() => setScreen("choose")} />
+              <ParentView saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => setScreen("choose")} />
             ) : screen === "home" ? (
               <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={startMission} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
@@ -1116,7 +1163,17 @@ function RewardView({ result, profileName, onNew }: { result: { earned: number; 
   );
 }
 
-function ParentView({ saved, onChooseProfile }: { saved: SavedState; onChooseProfile: () => void }) {
+function ParentView({
+  saved,
+  soundPreferences,
+  onSoundPreferencesChange,
+  onChooseProfile,
+}: {
+  saved: SavedState;
+  soundPreferences: SoundPreferences;
+  onSoundPreferencesChange: (preferences: SoundPreferences) => void;
+  onChooseProfile: () => void;
+}) {
   const total = saved.completed.ayham + saved.completed.kinan;
   return (
     <section className="parent-view">
@@ -1132,6 +1189,48 @@ function ParentView({ saved, onChooseProfile }: { saved: SavedState; onChoosePro
           {total > 0 ? <div className="timeline-item"><span className="timeline-icon"><Trophy size={14} /></span><div className="timeline-copy"><strong>كنز جديد في الدفتر</strong><p>آخر إنجاز عائلي: {total} مهام مكتملة.</p></div></div> : <div className="empty-reward" data-testid="empty-parent-activity"><CircleHelp size={17} /><div>لم يبدأ أي بطل مهمة بعد. الخريطة تنتظر أول خطوة.</div></div>}
         </div></div>
       </div>
+       <section className="sound-settings panel" data-testid="panel-sound-settings">
+         <div className="sound-settings-heading">
+           <div className="sound-settings-icon" aria-hidden="true">{soundPreferences.enabled ? <Volume2 size={21} /> : <VolumeX size={21} />}</div>
+           <div>
+             <h2 className="panel-title">أصوات التحديات</h2>
+             <p className="panel-subtitle">اختاروا الإيقاع المناسب للمذاكرة أو الأماكن الهادئة.</p>
+           </div>
+           <button
+             className={`sound-toggle ${soundPreferences.enabled ? "enabled" : ""}`}
+             type="button"
+             role="switch"
+             aria-checked={soundPreferences.enabled}
+             aria-label={soundPreferences.enabled ? "إيقاف أصوات التحديات" : "تشغيل أصوات التحديات"}
+             data-testid="button-toggle-sounds"
+             data-sound="none"
+             onClick={() => onSoundPreferencesChange({ ...soundPreferences, enabled: !soundPreferences.enabled })}
+           >
+             <span className="sound-toggle-knob" />
+             <span>{soundPreferences.enabled ? "الأصوات تعمل" : "الأصوات متوقفة"}</span>
+           </button>
+         </div>
+         <div className="sound-level-row">
+           <div className="sound-level-copy">
+             <label htmlFor="sound-level">مستوى الصوت</label>
+             <span>النغمات فقط • {Math.round(soundPreferences.volume * 100)}٪</span>
+           </div>
+           <input
+             id="sound-level"
+             data-testid="input-sound-level"
+             className="sound-range"
+             type="range"
+             min="0"
+             max="100"
+             step="5"
+             value={Math.round(soundPreferences.volume * 100)}
+             onInput={(event) => onSoundPreferencesChange({ ...soundPreferences, volume: Number(event.currentTarget.value) / 100 })}
+             onChange={(event) => onSoundPreferencesChange({ ...soundPreferences, volume: Number(event.currentTarget.value) / 100 })}
+             aria-label="مستوى صوت التحديات"
+           />
+         </div>
+         <p className="sound-visual-note"><BellRing size={14} /> تظل رسائل الوقت والعدّاد والتنبيهات المرئية واضحة حتى عند إيقاف الأصوات.</p>
+       </section>
     </section>
   );
 }
