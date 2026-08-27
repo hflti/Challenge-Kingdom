@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ArrowLeft,
   BellRing,
@@ -164,10 +164,19 @@ type ActiveChallenge = {
 };
 
 type ActiveChallenges = Partial<Record<ProfileId, ActiveChallenge>>;
+type SyncedKingdomState = Omit<SavedState, "selectedId">;
+
+type CloudStateResponse = {
+  state: SyncedKingdomState;
+  activeChallenges: ActiveChallenges;
+  version: number;
+  updatedAt: string;
+};
 
 const storageKey = "challenge-kingdom-state-v1";
 const activeChallengesKey = "challenge-kingdom-active-v1";
 const soundPreferencesKey = "challenge-kingdom-sound-v1";
+const familyCodeKey = "challenge-kingdom-family-code-v1";
 const defaultSoundPreferences: SoundPreferences = { enabled: true, volume: 0.55 };
 const mapStages = ["بوابة البيت", "غابة القراءة", "ميدان التحدي", "قلعة الحكمة"];
 const totalStages = mapStages.length;
@@ -227,6 +236,67 @@ function readSoundPreferences(): SoundPreferences {
   } catch {
     return defaultSoundPreferences;
   }
+}
+
+function readFamilyCode() {
+  try {
+    return localStorage.getItem(familyCodeKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function toSyncedKingdomState(state: SavedState): SyncedKingdomState {
+  return {
+    completed: state.completed,
+    points: state.points,
+    customMissions: state.customMissions,
+    extraChallenge: state.extraChallenge,
+  };
+}
+
+function isProfileRecord(value: unknown): value is Record<ProfileId, unknown> {
+  return value !== null && typeof value === "object" && "ayham" in value && "kinan" in value;
+}
+
+function normalizeSyncedKingdomState(value: unknown): SyncedKingdomState | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<SyncedKingdomState>;
+  if (!isProfileRecord(candidate.completed) || !isProfileRecord(candidate.points) || !isProfileRecord(candidate.customMissions)) return null;
+
+  return {
+    completed: {
+      ayham: typeof candidate.completed.ayham === "number" ? candidate.completed.ayham : 0,
+      kinan: typeof candidate.completed.kinan === "number" ? candidate.completed.kinan : 0,
+    },
+    points: {
+      ayham: typeof candidate.points.ayham === "number" ? candidate.points.ayham : 0,
+      kinan: typeof candidate.points.kinan === "number" ? candidate.points.kinan : 0,
+    },
+    customMissions: {
+      ayham: Array.isArray(candidate.customMissions.ayham) ? candidate.customMissions.ayham as SavedMission[] : [],
+      kinan: Array.isArray(candidate.customMissions.kinan) ? candidate.customMissions.kinan as SavedMission[] : [],
+    },
+    extraChallenge: {
+      duration: typeof candidate.extraChallenge?.duration === "number" ? candidate.extraChallenge.duration : defaultExtraChallenge.duration,
+      rewardPoints: typeof candidate.extraChallenge?.rewardPoints === "number" ? candidate.extraChallenge.rewardPoints : defaultExtraChallenge.rewardPoints,
+    },
+  };
+}
+
+function normalizeActiveChallenges(value: unknown): ActiveChallenges {
+  return value && typeof value === "object" ? value as ActiveChallenges : {};
+}
+
+function cloudSyncSignature(state: SavedState, challenges: ActiveChallenges) {
+  const stableChallenges = Object.fromEntries(
+    Object.entries(challenges).map(([profileId, challenge]) => {
+      if (!challenge) return [profileId, null];
+      const { seconds, pauseSeconds, alertSeconds, updatedAt, ...stableChallenge } = challenge;
+      return [profileId, stableChallenge];
+    }),
+  );
+  return JSON.stringify({ state: toSyncedKingdomState(state), activeChallenges: stableChallenges });
 }
 
 function missionFromSaved(savedMission: SavedMission): Mission {
@@ -435,11 +505,22 @@ function App() {
   const [lockedMission, setLockedMission] = useState<Mission | null>(null);
   const [unlockCode, setUnlockCode] = useState("");
   const [unlockCodeError, setUnlockCodeError] = useState("");
+  const [familyCode, setFamilyCode] = useState(() => readFamilyCode());
+  const [syncStatus, setSyncStatus] = useState<"needs-code" | "connecting" | "synced" | "offline">(() => readFamilyCode() ? "connecting" : "needs-code");
   const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => getInitialActiveChallenge()?.approvalStatus === "rejected" ? "no" : null);
   const [pointResult, setPointResult] = useState<{ earned: number; earlyBonus: number; bonus: number; total: number; extensions: number } | null>(null);
   const timerWasRunningRef = useRef(timerRunning);
   const timeUpAnnouncedRef = useRef(timeUp);
   const pauseBellPlayedRef = useRef(false);
+  const cloudVersionRef = useRef<number | null>(null);
+  const cloudReadyRef = useRef(false);
+  const skipCloudSaveRef = useRef(false);
+  const lastCloudSignatureRef = useRef<string | null>(null);
+  const cloudSaveInFlightRef = useRef(false);
+  const pendingCloudSaveRef = useRef(false);
+  const completedProfileIdRef = useRef<ProfileId | null>(null);
+  const savedRef = useRef(saved);
+  const activeChallengesRef = useRef(activeChallenges);
 
   const profile = useMemo(() => profiles.find((item) => item.id === selectedId) ?? null, [selectedId]);
   const completed = profile ? saved.completed[profile.id] : 0;
@@ -462,6 +543,190 @@ function App() {
   );
 
   useEffect(() => {
+    savedRef.current = saved;
+  }, [saved]);
+
+  useEffect(() => {
+    activeChallengesRef.current = activeChallenges;
+  }, [activeChallenges]);
+
+  const applyCloudState = useCallback((response: CloudStateResponse) => {
+    const remoteState = normalizeSyncedKingdomState(response.state);
+    if (!remoteState || !Number.isFinite(response.version) || response.version < 1) {
+      throw new Error("Received an invalid shared kingdom state.");
+    }
+
+    const remoteChallenges = normalizeActiveChallenges(response.activeChallenges);
+    cloudVersionRef.current = response.version;
+    lastCloudSignatureRef.current = cloudSyncSignature(
+      { ...remoteState, selectedId: null },
+      remoteChallenges,
+    );
+    skipCloudSaveRef.current = true;
+    setSaved((current) => ({ ...remoteState, selectedId: current.selectedId }));
+    setActiveChallenges(remoteChallenges);
+
+    if (!selectedId) return;
+    const active = restoreActiveChallenge(remoteChallenges[selectedId]);
+    setMission(active ? missionFromSaved(active.mission) : null);
+    setSeconds(active?.seconds ?? 0);
+    setTimerRunning(active?.running ?? false);
+    setTimeUp(active?.timeUp ?? false);
+    setPauseSeconds(active?.pauseSeconds ?? pauseBudgetSeconds);
+    setPauseActive(active?.pauseActive ?? Boolean(active?.pauseEndsAt));
+    setPauseEndsAt(active?.pauseEndsAt ?? null);
+    setAlertSeconds(active?.alertSeconds ?? 0);
+    setAlertEndsAt(active?.alertEndsAt ?? null);
+    setApprovalStatus(active?.approvalStatus ?? null);
+    setAnswerResult(active?.approvalStatus === "rejected" ? "no" : null);
+    setExtensionCount(active?.extensionCount ?? 0);
+    timerWasRunningRef.current = active?.running ?? false;
+    timeUpAnnouncedRef.current = active?.timeUp ?? false;
+    setScreen((current) => {
+      if (active) return active.approvalStatus ? "gate" : "quest";
+      return current === "quest" || current === "gate" ? "home" : current;
+    });
+  }, [selectedId]);
+
+  const pullCloudState = useCallback(async (force = false, apply = true) => {
+    if (!familyCode) return "missing" as const;
+    try {
+      const response = await fetch("/api/kingdom-state", {
+        headers: { "x-family-code": familyCode },
+        cache: "no-store",
+      });
+      if (response.status === 404) return "missing" as const;
+      if (!response.ok) throw new Error(`Cloud request failed with ${response.status}.`);
+
+      const payload = await response.json() as CloudStateResponse;
+      if (apply && (force || payload.version > (cloudVersionRef.current ?? 0))) {
+        applyCloudState(payload);
+      } else {
+        cloudVersionRef.current = Math.max(cloudVersionRef.current ?? 0, payload.version);
+      }
+      setSyncStatus("synced");
+      return "found" as const;
+    } catch {
+      setSyncStatus("offline");
+      return "offline" as const;
+    }
+  }, [applyCloudState, familyCode]);
+
+  const saveCloudState = useCallback(async (keepalive = false) => {
+    if (!familyCode || !cloudReadyRef.current) return;
+    if (cloudSaveInFlightRef.current) {
+      pendingCloudSaveRef.current = true;
+      return;
+    }
+
+    cloudSaveInFlightRef.current = true;
+    try {
+      do {
+        pendingCloudSaveRef.current = false;
+        const response = await fetch("/api/kingdom-state", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "x-family-code": familyCode,
+          },
+          body: JSON.stringify({
+            state: toSyncedKingdomState(savedRef.current),
+            activeChallenges: activeChallengesRef.current,
+            version: cloudVersionRef.current,
+            completedProfileId: completedProfileIdRef.current ?? undefined,
+          }),
+          cache: "no-store",
+          keepalive,
+        });
+
+        if (response.status === 409) {
+          if (completedProfileIdRef.current) {
+            await pullCloudState(false, false);
+            pendingCloudSaveRef.current = true;
+            continue;
+          }
+          await pullCloudState();
+          return;
+        }
+        if (!response.ok) throw new Error(`Cloud save failed with ${response.status}.`);
+
+        const payload = await response.json() as CloudStateResponse;
+        cloudVersionRef.current = payload.version;
+        if (completedProfileIdRef.current && !payload.activeChallenges[completedProfileIdRef.current]) {
+          completedProfileIdRef.current = null;
+        }
+        setSyncStatus("synced");
+      } while (pendingCloudSaveRef.current);
+    } catch {
+      setSyncStatus("offline");
+    } finally {
+      cloudSaveInFlightRef.current = false;
+    }
+  }, [familyCode, pullCloudState]);
+
+  useEffect(() => {
+    if (!familyCode) {
+      cloudReadyRef.current = false;
+      lastCloudSignatureRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+    cloudReadyRef.current = false;
+    setSyncStatus("connecting");
+    void (async () => {
+      const result = await pullCloudState(true);
+      if (cancelled) return;
+      cloudReadyRef.current = true;
+      if (result === "missing") {
+        await saveCloudState();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [familyCode]);
+
+  useEffect(() => {
+    if (!familyCode || !cloudReadyRef.current) return;
+    const signature = cloudSyncSignature(saved, activeChallenges);
+    if (skipCloudSaveRef.current) {
+      skipCloudSaveRef.current = false;
+      lastCloudSignatureRef.current = signature;
+      return;
+    }
+    if (signature === lastCloudSignatureRef.current) return;
+    lastCloudSignatureRef.current = signature;
+    const timeout = window.setTimeout(() => {
+      void saveCloudState();
+    }, 700);
+    return () => window.clearTimeout(timeout);
+  }, [activeChallenges, familyCode, saved, saveCloudState]);
+
+  useEffect(() => {
+    if (!familyCode) return;
+    const poll = () => {
+      if (!document.hidden) void pullCloudState();
+    };
+    const interval = window.setInterval(poll, 4000);
+    window.addEventListener("focus", poll);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", poll);
+    };
+  }, [familyCode, pullCloudState]);
+
+  useEffect(() => {
+    if (!familyCode) return;
+    const persistBeforeExit = () => {
+      void saveCloudState(true);
+    };
+    window.addEventListener("pagehide", persistBeforeExit);
+    return () => window.removeEventListener("pagehide", persistBeforeExit);
+  }, [familyCode, saveCloudState]);
+
+  useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify({ ...saved, selectedId }));
   }, [saved, selectedId]);
 
@@ -477,6 +742,16 @@ function App() {
   const updateSoundPreferences = (next: SoundPreferences) => {
     setSoundPreferencesState(next);
     applySoundPreferences(next);
+  };
+
+  const connectFamily = (code: string) => {
+    const normalizedCode = code.trim();
+    localStorage.setItem(familyCodeKey, normalizedCode);
+    cloudVersionRef.current = null;
+    cloudReadyRef.current = false;
+    lastCloudSignatureRef.current = null;
+    setFamilyCode(normalizedCode);
+    setSyncStatus("connecting");
   };
 
   useEffect(() => {
@@ -738,18 +1013,28 @@ function App() {
       const bonus = rawTotal >= mapFinishPoints ? Math.max(0, mapTotalPoints - rawTotal) : 0;
       const total = Math.min(mapTotalPoints, rawTotal + bonus);
       setPointResult({ earned, earlyBonus, bonus, total, extensions: extensionCount });
-      setSaved((current) => ({
-        ...current,
-        completed: { ...current.completed, [profile.id]: Math.min(totalStages, current.completed[profile.id] + 1) },
-        points: { ...current.points, [profile.id]: total },
-      }));
-      setActiveChallenges((current) => {
-        const next = { ...current };
-        delete next[profile.id];
-        return next;
-      });
+      const completedState: SavedState = {
+        ...saved,
+        completed: { ...saved.completed, [profile.id]: Math.min(totalStages, saved.completed[profile.id] + 1) },
+        points: { ...saved.points, [profile.id]: total },
+      };
+      const completedChallenges = { ...activeChallenges };
+      delete completedChallenges[profile.id];
+      completedProfileIdRef.current = profile.id;
+      savedRef.current = completedState;
+      activeChallengesRef.current = completedChallenges;
+      lastCloudSignatureRef.current = cloudSyncSignature(completedState, completedChallenges);
+      setSaved(completedState);
+      setActiveChallenges(completedChallenges);
+      setMission(null);
+      setTimerRunning(false);
+      setPauseActive(false);
+      setPauseEndsAt(null);
+      setAlertSeconds(0);
+      setAlertEndsAt(null);
       setApprovalStatus(null);
       setScreen("reward");
+      void saveCloudState();
       return;
     }
     playSound("failure");
@@ -856,6 +1141,10 @@ function App() {
     return true;
   };
 
+  if (!familyCode) {
+    return <FamilySyncSetup onConnect={connectFamily} />;
+  }
+
   if (screen === "choose" || !selectedId) {
     return (
       <ProfileChooser onChoose={chooseProfile} />
@@ -899,6 +1188,9 @@ function App() {
               <b>{tab === "parent" ? "مرصد الوالدين" : screen === "quest" ? "ميدان التحدي" : screen === "gate" ? "بوابة التحقق" : screen === "reward" ? "قاعة الكنوز" : "ساحة المغامرة"}</b>
             </div>
             <div className="top-actions">
+              <span className={`sync-chip ${syncStatus}`} data-testid="status-cloud-sync">
+                {syncStatus === "synced" ? "البيانات متزامنة" : syncStatus === "connecting" ? "جارٍ ربط البيانات…" : "سيُعاد الحفظ عند عودة الاتصال"}
+              </span>
               <span className="date-chip" data-testid="text-today-date">{getArabicDate()}</span>
               <button className="profile-switch" data-testid="button-switch-profile" onClick={() => setScreen("choose")}>
                 <span className="mini-avatar" style={{ background: activeProfile.color }}>{activeProfile.initials}</span>
@@ -928,6 +1220,39 @@ function App() {
         <button data-testid="mobile-nav-parent" className={tab === "parent" ? "active" : ""} onClick={() => { setTab("parent"); setScreen("home"); }}><Users size={18} /><span>الوالدان</span></button>
         <button data-testid="mobile-nav-profile" onClick={() => setScreen("choose")}><UserRound size={18} /><span>الأبطال</span></button>
       </nav>
+    </div>
+  );
+}
+
+function FamilySyncSetup({ onConnect }: { onConnect: (code: string) => void }) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const normalizedCode = code.trim();
+    if (normalizedCode.length < 4 || normalizedCode.length > 64) {
+      setError("اكتب رمز عائلة من 4 إلى 64 حرفاً أو رقماً.");
+      return;
+    }
+    onConnect(normalizedCode);
+  };
+
+  return (
+    <div className="kingdom-app family-sync-page" dir="rtl">
+      <section className="family-sync-card" data-testid="panel-family-sync-setup">
+        <div className="brand-mark"><Crown size={24} /></div>
+        <div className="eyebrow" style={{ justifyContent: "center" }}>ربط أجهزة العائلة</div>
+        <h1 className="display-title">احتفظوا بالمملكة متصلة</h1>
+        <p>أنشئوا رمزاً خاصاً بالعائلة على أول جهاز، ثم أدخلوه نفسه في أي هاتف أو متصفح آخر لتظهر النقاط والمهام والمؤقت كما هي.</p>
+        <form onSubmit={submit}>
+          <label htmlFor="family-code">رمز العائلة</label>
+          <input id="family-code" className="code-input" data-testid="input-family-code" type="password" autoComplete="off" minLength={4} maxLength={64} value={code} onChange={(event) => { setCode(event.target.value); setError(""); }} placeholder="مثال: مملكتنا2026" aria-describedby="family-code-note" autoFocus />
+          <span id="family-code-note">لا تشاركوا هذا الرمز خارج العائلة.</span>
+          {error && <p className="form-error" data-testid="status-family-code-error">{error}</p>}
+          <button className="primary-button gold" type="submit" data-testid="button-connect-family"><KeyRound size={16} /> ربط المملكة</button>
+        </form>
+      </section>
     </div>
   );
 }

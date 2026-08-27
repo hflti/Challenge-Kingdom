@@ -24,7 +24,61 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /kingdom-state:
+    get:
+      operationId: getKingdomState
+      tags: [kingdom]
+      summary: Get the family's shared challenge state
+      parameters:
+        - $ref: "#/components/parameters/FamilyCode"
+      responses:
+        "200":
+          description: Shared state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KingdomStateResponse"
+        "404":
+          description: No state has been saved for this family yet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: saveKingdomState
+      tags: [kingdom]
+      summary: Save the family's shared challenge state
+      parameters:
+        - $ref: "#/components/parameters/FamilyCode"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+                $ref: "#/components/schemas/KingdomStateSaveRequest"
+      responses:
+        "200":
+          description: Updated shared state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KingdomStateResponse"
+        "409":
+          description: A newer version was saved from another device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
+  parameters:
+    FamilyCode:
+      name: x-family-code
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 4
+        maxLength: 64
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +87,50 @@ components:
           type: string
       required:
         - status
+    KingdomData:
+      type: object
+      additionalProperties: true
+    KingdomStateResponse:
+      type: object
+      properties:
+        state:
+          $ref: "#/components/schemas/KingdomData"
+        activeChallenges:
+          $ref: "#/components/schemas/KingdomData"
+        version:
+          type: number
+          minimum: 1
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - state
+        - activeChallenges
+        - version
+        - updatedAt
+    KingdomStateSaveRequest:
+      type: object
+      properties:
+        state:
+          $ref: "#/components/schemas/KingdomData"
+        activeChallenges:
+          $ref: "#/components/schemas/KingdomData"
+        version:
+          type: number
+          minimum: 1
+          nullable: true
+        completedProfileId:
+          type: string
+          enum: [ayham, kinan]
+      required:
+        - state
+        - activeChallenges
+        - version
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
 
