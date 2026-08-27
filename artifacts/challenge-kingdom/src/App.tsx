@@ -229,6 +229,8 @@ function App() {
   const [seconds, setSeconds] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timeUp, setTimeUp] = useState(false);
+  const [pauseUsed, setPauseUsed] = useState(false);
+  const [pauseSeconds, setPauseSeconds] = useState(0);
   const [extensionCount, setExtensionCount] = useState(0);
   const [finishCodeOpen, setFinishCodeOpen] = useState(false);
   const [finishCode, setFinishCode] = useState("");
@@ -267,6 +269,20 @@ function App() {
     return () => window.clearInterval(tick);
   }, [timerRunning, screen]);
 
+  useEffect(() => {
+    if (pauseSeconds <= 0 || screen !== "quest") return;
+    const pauseTick = window.setInterval(() => {
+      setPauseSeconds((current) => {
+        if (current <= 1) {
+          setTimerRunning(true);
+          return 0;
+        }
+        return current - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(pauseTick);
+  }, [pauseSeconds, screen]);
+
   const chooseProfile = (id: ProfileId) => {
     setSelectedId(id);
     setTab("quest");
@@ -275,6 +291,8 @@ function App() {
     setTimerRunning(false);
     setTimeUp(false);
     setFinishCodeOpen(false);
+    setPauseUsed(false);
+    setPauseSeconds(0);
     setExtensionCount(0);
   };
 
@@ -289,6 +307,8 @@ function App() {
     setFinishCodeError("");
     setAnswerResult(null);
     setPointResult(null);
+    setPauseUsed(false);
+    setPauseSeconds(0);
     setExtensionCount(0);
     playSound("start");
     setScreen("quest");
@@ -303,6 +323,13 @@ function App() {
     setFinishCodeError("");
     setExtensionCount((count) => count + 1);
     setTimerRunning(true);
+  };
+
+  const pauseMission = () => {
+    if (!mission || !timerRunning || pauseUsed || timeUp) return;
+    setTimerRunning(false);
+    setPauseUsed(true);
+    setPauseSeconds(120);
   };
 
   const verifyFinishCode = () => {
@@ -341,11 +368,14 @@ function App() {
   const newChallenge = () => {
     setMission(null);
     setPointResult(null);
+    setTimerRunning(false);
     setTimeUp(false);
     setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
     setAnswerResult(null);
+    setPauseUsed(false);
+    setPauseSeconds(0);
     setExtensionCount(0);
     setScreen("home");
     setTab("quest");
@@ -447,7 +477,7 @@ function App() {
             ) : screen === "home" ? (
               <HomeView profile={activeProfile} completed={completed} points={points} missions={profileMissions} onStart={startMission} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
-              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={newChallenge} onToggle={() => setTimerRunning((value) => !value)} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
+              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} pauseUsed={pauseUsed} pauseSeconds={pauseSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={newChallenge} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onExtend={extendMission} onOpenFinishCode={() => { setFinishCodeOpen(true); setFinishCodeError(""); }} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
               <GateView answerResult={answerResult} onAnswer={answerMission} onBack={newChallenge} />
             ) : (
@@ -623,7 +653,7 @@ function HomeView({
             <div className="map-points-summary"><strong>{points} / {mapTotalPoints}</strong><span>نقطة في خريطة {profile.name}</span><div className="map-points-track"><i style={{ width: `${Math.min(100, (points / mapTotalPoints) * 100)}%` }} /></div></div>
             {points >= mapFinishPoints && <div className="map-complete">
               <div><strong>فاز {profile.name} بالمرحلة الأخيرة!</strong><span>أدخل رمز القائد لإعادة الرحلة إلى المرحلة الأولى.</span></div>
-              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" inputMode="numeric" maxLength={4} value={resetCode} onChange={(event) => setResetCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={submitMapReset}><RotateCcw size={15} /> إعادة الخريطة</button></div>
+              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={resetCode} onChange={(event) => setResetCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={submitMapReset}><RotateCcw size={15} /> إعادة الخريطة</button></div>
               {resetError && <p className="form-error" data-testid="status-map-reset-error">{resetError}</p>}
             </div>}
         </div>
@@ -637,11 +667,14 @@ function QuestView({
   seconds,
   running,
   timeUp,
+  pauseUsed,
+  pauseSeconds,
   finishCodeOpen,
   finishCode,
   error,
   onBack,
-  onToggle,
+  onStartTimer,
+  onPause,
   onExtend,
   onOpenFinishCode,
   onCode,
@@ -651,11 +684,14 @@ function QuestView({
   seconds: number;
   running: boolean;
   timeUp: boolean;
+  pauseUsed: boolean;
+  pauseSeconds: number;
   finishCodeOpen: boolean;
   finishCode: string;
   error: string;
   onBack: () => void;
-  onToggle: () => void;
+  onStartTimer: () => void;
+  onPause: () => void;
   onExtend: () => void;
   onOpenFinishCode: () => void;
   onCode: (value: string) => void;
@@ -669,11 +705,11 @@ function QuestView({
       <div className="quest-layout">
         <section className="quest-card" data-testid="panel-active-quest">
           <div className="eyebrow"><Icon size={14} /> المهمة النشطة</div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
-          <div className={`timer-shell ${running ? "running" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{formatTime(seconds)}</span><span className="timer-label">{seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
+          <div className={`timer-shell ${running ? "running" : ""} ${pauseSeconds > 0 ? "paused" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{formatTime(seconds)}</span><span className="timer-label">{pauseSeconds > 0 ? `استراحة ${formatTime(pauseSeconds)}` : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
           <div className="quest-actions">
-            <button className="primary-button gold" data-testid={running ? "button-pause-timer" : "button-start-timer"} onClick={onToggle} disabled={seconds === 0}>{running ? <><Pause size={16} /> إيقاف مؤقت</> : <><Play size={16} /> ابدأ العدّاد</>}</button>
+             {running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseUsed}>{pauseUsed ? <><Pause size={16} /> تم استخدام الإيقاف</> : <><Pause size={16} /> إيقاف لمدة دقيقتين</>}</button> : <button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || pauseSeconds > 0}><Play size={16} /> {pauseSeconds > 0 ? "الاستراحة جارية" : "ابدأ العدّاد"}</button>}
           </div>
-           {!timeUp ? <p className="quest-note"><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> عند انتهاء الوقت سيظهر جرس وخيارات القائد.</p> : (
+            {!timeUp ? <p className={`quest-note ${pauseSeconds > 0 ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseSeconds > 0 ? "استراحة الدقيقتين جارية، وسيستأنف العدّاد تلقائياً." : pauseUsed ? "تم استخدام الإيقاف الوحيد، ولا يمكن إيقاف العدّاد مرة أخرى." : "يتوفر إيقاف واحد فقط لمدة دقيقتين."}</p> : (
              <div className="time-up-panel" data-testid="panel-time-up">
                <div className="time-up-heading"><BellRing size={20} /><strong>انتهى وقت المعركة!</strong><span>سمعنا الجرس. اختر الخطوة التالية.</span></div>
                {!finishCodeOpen ? (
@@ -684,7 +720,7 @@ function QuestView({
                ) : (
                   <form className="finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
                    <label htmlFor="finish-code">رمز إنهاء المهمة</label>
-                    <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
+                     <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
                    {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
                     <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
                   </form>
@@ -694,7 +730,7 @@ function QuestView({
         </section>
         <aside className="battle-aside">
           <div className="monster-card"><h3>العدو: ملل</h3><p>يحب أن يهمس: «اترك الصفحة الآن». لا تمنحه هذه الفرصة.</p><div className="monster"><div className="monster-eyes"><span>•</span><span>•</span></div><div className="monster-mouth" /></div></div>
-          <div className="rule-card"><h3>قواعد الميدان</h3><div className="rule"><ShieldCheck size={14} /><span>ضع أدواتك أمامك قبل بدء العدّاد.</span></div><div className="rule"><TimerReset size={14} /><span>يمكنك الإيقاف المؤقت عند الحاجة.</span></div><div className="rule"><Trophy size={14} /><span>الكنز يفتح بعد موافقة ولي الأمر.</span></div></div>
+          <div className="rule-card"><h3>قواعد الميدان</h3><div className="rule"><ShieldCheck size={14} /><span>ضع أدواتك أمامك قبل بدء العدّاد.</span></div><div className="rule"><TimerReset size={14} /><span>إيقاف واحد فقط لمدة دقيقتين، ثم يستأنف العدّاد تلقائياً.</span></div><div className="rule"><Trophy size={14} /><span>النقاط تُحتسب بعد موافقة ولي الأمر.</span></div></div>
         </aside>
       </div>
     </>
