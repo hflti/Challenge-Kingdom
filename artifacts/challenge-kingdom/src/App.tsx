@@ -158,8 +158,12 @@ type ActiveChallenge = {
   seconds: number;
   extensionCount: number;
   timerEndsAt?: number | null;
+  challengeStartedAt?: number | null;
   pauseSeconds: number;
   pauseActive?: boolean;
+  pauseStartedAt?: number | null;
+  pausedSecondsTotal?: number;
+  pauseRechargeCount?: number;
   pauseEndsAt: number | null;
   timeUp: boolean;
   timeUpAt?: number | null;
@@ -194,7 +198,9 @@ const mapStages = ["بوابة البيت", "غابة القراءة", "ميدا
 const totalStages = mapStages.length;
 const mapTotalPoints = 120;
 const mapFinishPoints = 100;
-const pauseBudgetSeconds = 120;
+const pauseBudgetSeconds = 30;
+const pauseRechargeIntervalSeconds = 5 * 60;
+const pauseRechargeAmountSeconds = 30;
 const timeUpAlertSeconds = 15;
 const timeUpDecisionSeconds = 120;
 const parentCode = "1230";
@@ -323,8 +329,14 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
   if (!challenge) return null;
   const now = Date.now();
   let seconds = challenge.seconds;
-  let pauseSeconds = typeof challenge.pauseSeconds === "number" ? challenge.pauseSeconds : (challenge.pauseUsed ? 0 : pauseBudgetSeconds);
+  const storedPauseSeconds = typeof challenge.pauseSeconds === "number" ? challenge.pauseSeconds : (challenge.pauseUsed ? 0 : pauseBudgetSeconds);
+  let pauseSeconds = storedPauseSeconds;
+  if (challenge.pauseRechargeCount == null) pauseSeconds = Math.min(pauseSeconds, pauseBudgetSeconds);
   let pauseActive = challenge.pauseActive ?? Boolean(challenge.pauseEndsAt);
+  let pauseStartedAt = challenge.pauseStartedAt ?? (pauseActive ? challenge.updatedAt : null);
+  let pausedSecondsTotal = challenge.pausedSecondsTotal ?? 0;
+  let pauseRechargeCount = challenge.pauseRechargeCount ?? 0;
+  const challengeStartedAt = challenge.challengeStartedAt ?? (challenge.running || pauseActive || challenge.timeUp ? challenge.updatedAt - Math.max(0, challenge.mission.duration - challenge.seconds) * 1000 : null);
   let pauseEndsAt = challenge.pauseEndsAt;
   let timerEndsAt = challenge.timerEndsAt ?? null;
   let running = challenge.running;
@@ -343,14 +355,15 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
     } else {
       const pauseEndedAt = pauseEndsAt;
       const secondsBeforePause = seconds;
+      const pauseStarted = pauseStartedAt ?? pauseEndedAt - pauseSeconds * 1000;
+      pausedSecondsTotal += Math.max(0, Math.floor((pauseEndedAt - pauseStarted) / 1000));
       seconds = Math.max(0, seconds - Math.floor((now - pauseEndsAt) / 1000));
       pauseSeconds = 0;
       pauseActive = false;
+      pauseStartedAt = null;
       pauseEndsAt = null;
       timerEndsAt = pauseEndedAt + secondsBeforePause * 1000;
-      running = seconds > 0;
-      timeUp = seconds === 0;
-      if (timeUp) timeUpAt = pauseEndedAt + secondsBeforePause * 1000;
+      running = true;
     }
   } else if (!timeUp && running) {
     if (timerEndsAt) {
@@ -361,10 +374,42 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
       seconds = Math.max(0, seconds - Math.floor((now - challenge.updatedAt) / 1000));
       timerEndsAt = now + seconds * 1000;
     }
+  }
+
+  if (!timeUp && challengeStartedAt) {
+    const pauseElapsed = pauseActive && pauseStartedAt ? Math.max(0, Math.floor((now - pauseStartedAt) / 1000)) : 0;
+    const activeElapsed = Math.max(0, Math.floor((now - challengeStartedAt) / 1000) - pausedSecondsTotal - pauseElapsed);
+    let allocatedActiveDuration = pauseActive || !timerEndsAt
+      ? activeElapsed + seconds
+      : activeElapsed + (timerEndsAt - now) / 1000;
+    let newRechargeCount = pauseRechargeCount;
+    while (
+      (newRechargeCount + 1) * pauseRechargeIntervalSeconds <= activeElapsed &&
+      (newRechargeCount + 1) * pauseRechargeIntervalSeconds < allocatedActiveDuration
+    ) {
+      newRechargeCount += 1;
+      allocatedActiveDuration += pauseRechargeAmountSeconds;
+    }
+    const rechargeUnits = newRechargeCount - pauseRechargeCount;
+    if (rechargeUnits > 0) {
+      const rechargeSeconds = rechargeUnits * pauseRechargeAmountSeconds;
+      pauseSeconds += rechargeSeconds;
+      if (pauseActive) {
+        seconds += rechargeSeconds;
+        if (pauseEndsAt) pauseEndsAt += rechargeSeconds * 1000;
+      } else if (timerEndsAt) {
+        timerEndsAt += rechargeSeconds * 1000;
+        seconds = Math.max(0, Math.ceil((timerEndsAt - now) / 1000));
+      }
+      pauseRechargeCount = newRechargeCount;
+    }
+  }
+
+  if (!timeUp && !pauseActive && running) {
     running = seconds > 0;
     if (seconds === 0) {
       timeUp = true;
-      timeUpAt = challenge.timerEndsAt ?? challenge.updatedAt + challenge.seconds * 1000;
+      timeUpAt = timerEndsAt ?? challenge.timerEndsAt ?? challenge.updatedAt + challenge.seconds * 1000;
       timerEndsAt = null;
     }
   }
@@ -396,8 +441,12 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
     challengeId: challenge.challengeId ?? `legacy-${challenge.mission.id}-${challenge.updatedAt}`,
     seconds,
     timerEndsAt,
+    challengeStartedAt,
     pauseSeconds,
     pauseActive,
+    pauseStartedAt,
+    pausedSecondsTotal,
+    pauseRechargeCount,
     pauseEndsAt,
     timeUp,
     timeUpAt,
@@ -558,8 +607,12 @@ function App() {
   const [timerRunning, setTimerRunning] = useState(() => getInitialActiveChallenge()?.running ?? false);
   const [timeUp, setTimeUp] = useState(() => getInitialActiveChallenge()?.timeUp ?? false);
   const [timeUpAt, setTimeUpAt] = useState<number | null>(() => getInitialActiveChallenge()?.timeUpAt ?? null);
+  const [challengeStartedAt, setChallengeStartedAt] = useState<number | null>(() => getInitialActiveChallenge()?.challengeStartedAt ?? null);
   const [pauseSeconds, setPauseSeconds] = useState(() => getInitialActiveChallenge()?.pauseSeconds ?? pauseBudgetSeconds);
   const [pauseActive, setPauseActive] = useState(() => getInitialActiveChallenge()?.pauseActive ?? Boolean(getInitialActiveChallenge()?.pauseEndsAt));
+  const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(() => getInitialActiveChallenge()?.pauseStartedAt ?? null);
+  const [pausedSecondsTotal, setPausedSecondsTotal] = useState(() => getInitialActiveChallenge()?.pausedSecondsTotal ?? 0);
+  const [pauseRechargeCount, setPauseRechargeCount] = useState(() => getInitialActiveChallenge()?.pauseRechargeCount ?? 0);
   const [pauseEndsAt, setPauseEndsAt] = useState<number | null>(() => getInitialActiveChallenge()?.pauseEndsAt ?? null);
   const [alertSeconds, setAlertSeconds] = useState(() => getInitialActiveChallenge()?.alertSeconds ?? 0);
   const [alertEndsAt, setAlertEndsAt] = useState<number | null>(() => getInitialActiveChallenge()?.alertEndsAt ?? null);
@@ -631,8 +684,12 @@ function App() {
     setTimerRunning(active?.running ?? false);
     setTimeUp(active?.timeUp ?? false);
     setTimeUpAt(active?.timeUpAt ?? null);
+    setChallengeStartedAt(active?.challengeStartedAt ?? null);
     setPauseSeconds(active?.pauseSeconds ?? pauseBudgetSeconds);
     setPauseActive(active?.pauseActive ?? Boolean(active?.pauseEndsAt));
+    setPauseStartedAt(active?.pauseStartedAt ?? null);
+    setPausedSecondsTotal(active?.pausedSecondsTotal ?? 0);
+    setPauseRechargeCount(active?.pauseRechargeCount ?? 0);
     setPauseEndsAt(active?.pauseEndsAt ?? null);
     setAlertSeconds(active?.alertSeconds ?? 0);
     setAlertEndsAt(active?.alertEndsAt ?? null);
@@ -912,14 +969,29 @@ function App() {
     if (!timerRunning || !timerEndsAt || timeUp) return;
     timerWasRunningRef.current = true;
     const tick = () => {
-      const remaining = Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000));
+      const now = Date.now();
+      let effectiveTimerEndsAt = timerEndsAt;
+      const remainingBeforeRecharge = Math.max(0, Math.ceil((timerEndsAt - now) / 1000));
+      if (challengeStartedAt && remainingBeforeRecharge > 0) {
+        const activeElapsed = Math.max(0, Math.floor((now - challengeStartedAt) / 1000) - pausedSecondsTotal);
+        const earnedRechargeCount = Math.floor(activeElapsed / pauseRechargeIntervalSeconds);
+        const rechargeUnits = Math.max(0, earnedRechargeCount - pauseRechargeCount);
+        if (rechargeUnits > 0) {
+          const rechargeSeconds = rechargeUnits * pauseRechargeAmountSeconds;
+          effectiveTimerEndsAt += rechargeSeconds * 1000;
+          setTimerEndsAt(effectiveTimerEndsAt);
+          setPauseSeconds((current) => current + rechargeSeconds);
+          setPauseRechargeCount(earnedRechargeCount);
+        }
+      }
+      const remaining = Math.max(0, Math.ceil((effectiveTimerEndsAt - now) / 1000));
       setSeconds((current) => current === remaining ? current : remaining);
       if (remaining === 0) setTimerRunning(false);
     };
     tick();
     const interval = window.setInterval(tick, 500);
     return () => window.clearInterval(interval);
-  }, [timeUp, timerEndsAt, timerRunning]);
+  }, [challengeStartedAt, pauseRechargeCount, pausedSecondsTotal, timeUp, timerEndsAt, timerRunning]);
 
   useEffect(() => {
     if (!mission || timerRunning || seconds !== 0 || timeUp || !timerWasRunningRef.current || timeUpAnnouncedRef.current) return;
@@ -946,8 +1018,11 @@ function App() {
       setPauseSeconds((current) => current === remaining ? current : remaining);
       if (remaining === 0) {
         const resumedTimerEndsAt = pauseEndsAt + seconds * 1000;
+        const pauseStarted = pauseStartedAt ?? pauseEndsAt - pauseBudgetSeconds * 1000;
         timerWasRunningRef.current = true;
+        setPausedSecondsTotal((current) => current + Math.max(0, Math.floor((pauseEndsAt - pauseStarted) / 1000)));
         setPauseActive(false);
+        setPauseStartedAt(null);
         setPauseEndsAt(null);
         setTimerEndsAt(resumedTimerEndsAt);
         setTimerRunning(true);
@@ -956,7 +1031,7 @@ function App() {
     tick();
     const interval = window.setInterval(tick, 500);
     return () => window.clearInterval(interval);
-  }, [pauseActive, pauseEndsAt, seconds]);
+  }, [pauseActive, pauseEndsAt, pauseSeconds, pauseStartedAt, seconds]);
 
   useEffect(() => {
     if (!pauseActive) {
@@ -1000,8 +1075,12 @@ function App() {
       seconds,
       extensionCount,
       timerEndsAt,
+      challengeStartedAt,
       pauseSeconds,
       pauseActive,
+      pauseStartedAt,
+      pausedSecondsTotal,
+      pauseRechargeCount,
       pauseEndsAt,
       timeUp,
       timeUpAt,
@@ -1019,7 +1098,7 @@ function App() {
       activeChallengesRef.current = next;
       return next;
     });
-  }, [selectedId, activeChallengeId, mission, seconds, extensionCount, timerEndsAt, pauseSeconds, pauseActive, pauseEndsAt, timeUp, timeUpAt, alertSeconds, alertEndsAt, graceSeconds, graceEndsAt, approvalStatus, completionChoice, timerRunning]);
+  }, [selectedId, activeChallengeId, mission, seconds, extensionCount, timerEndsAt, challengeStartedAt, pauseSeconds, pauseActive, pauseStartedAt, pausedSecondsTotal, pauseRechargeCount, pauseEndsAt, timeUp, timeUpAt, alertSeconds, alertEndsAt, graceSeconds, graceEndsAt, approvalStatus, completionChoice, timerRunning]);
 
   useEffect(() => {
     const reconcileFromClock = () => {
@@ -1071,6 +1150,7 @@ function App() {
     setTimerRunning(false);
     setTimeUp(false);
     setTimeUpAt(null);
+    setChallengeStartedAt(null);
     setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
@@ -1078,6 +1158,9 @@ function App() {
     setPointResult(null);
     setPauseSeconds(pauseBudgetSeconds);
     setPauseActive(false);
+    setPauseStartedAt(null);
+    setPausedSecondsTotal(0);
+    setPauseRechargeCount(0);
     setPauseEndsAt(null);
     setAlertSeconds(0);
     setAlertEndsAt(null);
@@ -1147,8 +1230,10 @@ function App() {
 
   const startTimer = () => {
     if (!mission || seconds <= 0 || timeUp) return;
+    const now = Date.now();
     timerWasRunningRef.current = true;
-    setTimerEndsAt(Date.now() + seconds * 1000);
+    setChallengeStartedAt((current) => current ?? now);
+    setTimerEndsAt(now + seconds * 1000);
     setTimerRunning(true);
   };
 
@@ -1176,19 +1261,27 @@ function App() {
 
   const pauseMission = () => {
     if (!mission || !timerRunning || pauseSeconds <= 0 || timeUp) return;
+    const now = Date.now();
     timerWasRunningRef.current = false;
     setTimerRunning(false);
     setTimerEndsAt(null);
     setPauseActive(true);
-    setPauseEndsAt(Date.now() + pauseSeconds * 1000);
+    setPauseStartedAt(now);
+    setPauseEndsAt(now + pauseSeconds * 1000);
   };
 
   const resumeMission = () => {
     if (!mission || !pauseActive || seconds <= 0) return;
+    const now = Date.now();
+    const pauseDeadline = pauseEndsAt ?? now;
+    const pauseStarted = pauseStartedAt ?? Math.min(now, pauseDeadline - pauseBudgetSeconds * 1000);
+    const pauseFinishedAt = Math.min(now, pauseDeadline);
     timerWasRunningRef.current = true;
     setPauseActive(false);
+    setPauseStartedAt(null);
+    setPausedSecondsTotal((current) => current + Math.max(0, Math.floor((pauseFinishedAt - pauseStarted) / 1000)));
     setPauseEndsAt(null);
-    setTimerEndsAt(Date.now() + seconds * 1000);
+    setTimerEndsAt(pauseDeadline <= now ? pauseDeadline + seconds * 1000 : now + seconds * 1000);
     setTimerRunning(true);
   };
 
@@ -1260,7 +1353,11 @@ function App() {
     setTimerRunning(false);
     setTimerEndsAt(null);
     setTimeUpAt(null);
+    setChallengeStartedAt(null);
     setPauseActive(false);
+    setPauseStartedAt(null);
+    setPausedSecondsTotal(0);
+    setPauseRechargeCount(0);
     setPauseEndsAt(null);
     setAlertSeconds(0);
     setAlertEndsAt(null);
@@ -1313,12 +1410,16 @@ function App() {
     setTimerEndsAt(null);
     setTimeUp(false);
     setTimeUpAt(null);
+    setChallengeStartedAt(null);
     setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
     setAnswerResult(null);
     setPauseSeconds(pauseBudgetSeconds);
     setPauseActive(false);
+    setPauseStartedAt(null);
+    setPausedSecondsTotal(0);
+    setPauseRechargeCount(0);
     setPauseEndsAt(null);
     setAlertSeconds(0);
     setAlertEndsAt(null);
@@ -1818,7 +1919,7 @@ function QuestView({
                   <button className="outline-button" type="button" data-testid="button-cancel-finish-code" onClick={onCancelFinishCode}><ArrowLeft size={16} /> العودة للتحدي</button>
                 </div>
               </form>
-            ) : <p className={`quest-note ${pauseActive ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseActive ? `الاستراحة جارية. يمكنك الاستئناف الآن أو استخدام ما تبقى من الرصيد لاحقاً.` : pauseSeconds > 0 ? `رصيد الاستراحة المتبقي: ${formatTime(pauseSeconds)} من أصل دقيقتين.` : "اكتمل رصيد الاستراحة لهذه المهمة."}</p> : (
+            ) : <p className={`quest-note ${pauseActive ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseActive ? `الإيقاف المؤقت جارٍ. يمكنك الاستئناف الآن أو استخدام ما تبقى من الرصيد لاحقاً.` : `رصيد الإيقاف المؤقت: ${formatTime(pauseSeconds)}. يُضاف 00:30 للرصيد ولوقت التحدي كل 5 دقائق من اللعب.`}</p> : (
              <div className="time-up-panel" data-testid="panel-time-up">
                 <div className="time-up-heading"><BellRing size={20} /><strong>انتهى وقت المعركة!</strong><span>{alertSeconds > 0 ? `تنبيه النهاية جارٍ لمدة ${formatTime(alertSeconds)}. انتظر قبل التمديد.` : `لديك مهلة ${formatTime(graceSeconds)} لتمديد الوقت أو إنهاء التحدي، ثم يُلغى التحدي تلقائياً مع خصم نقطتين.`}</span></div>
                {!finishCodeOpen ? (
@@ -1842,7 +1943,7 @@ function QuestView({
         </section>
         <aside className="battle-aside">
           <div className="monster-card"><h3>العدو: ملل</h3><p>يحب أن يهمس: «اترك الصفحة الآن». لا تمنحه هذه الفرصة.</p><div className="monster"><div className="monster-eyes"><span>•</span><span>•</span></div><div className="monster-mouth" /></div></div>
-          <div className="rule-card"><h3>قواعد الميدان</h3><div className="rule"><ShieldCheck size={14} /><span>ضع أدواتك أمامك قبل بدء العدّاد.</span></div><div className="rule"><TimerReset size={14} /><span>رصيد الاستراحة دقيقتان ويمكن تقسيمه على عدة إيقافات.</span></div><div className="rule"><Trophy size={14} /><span>النقاط تُحتسب بعد موافقة ولي الأمر.</span></div></div>
+          <div className="rule-card"><h3>قواعد الميدان</h3><div className="rule"><ShieldCheck size={14} /><span>ضع أدواتك أمامك قبل بدء العدّاد.</span></div><div className="rule"><TimerReset size={14} /><span>يبدأ الإيقاف المؤقت بـ30 ثانية، ويتجدد 30 ثانية مع إضافة مثلها للوقت المتبقي كل 5 دقائق.</span></div><div className="rule"><Trophy size={14} /><span>النقاط تُحتسب بعد موافقة ولي الأمر.</span></div></div>
         </aside>
       </div>
     </>
