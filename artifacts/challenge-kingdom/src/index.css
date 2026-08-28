@@ -359,6 +359,27 @@
 .meta-pill { color: hsl(var(--secondary)); background: hsl(var(--muted)); padding: 6px 10px; border-radius: 999px; font-size: 10px; font-weight: 800; }
 .meta-pill.gold { background: rgba(244,190,57,.22); }
 .choose-foot { text-align: center; color: hsl(var(--muted-foreground)); font-size: 11px; margin-top: auto; padding-top: 42px; }
+.profile-access-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 22px;
+  background: rgba(27, 27, 51, .58); backdrop-filter: blur(4px);
+}
+.profile-access-card {
+  width: min(100%, 410px); box-sizing: border-box; padding: 25px; text-align: center;
+  background: hsl(var(--card)); border: 2px solid hsl(var(--accent)); border-radius: 22px;
+  box-shadow: var(--shadow-deep); animation: rise-in .24s ease-out both;
+}
+.profile-access-icon {
+  width: 52px; height: 52px; display: grid; place-items: center; margin: 0 auto 11px;
+  color: hsl(var(--secondary)); background: hsl(var(--accent)); border-radius: 16px;
+}
+.profile-access-card .eyebrow { justify-content: center; }
+.profile-access-card h2 { margin: 8px 0 7px; color: hsl(var(--secondary)); font-family: var(--app-font-serif); font-size: 29px; }
+.profile-access-card > p { max-width: 320px; margin: 0 auto 19px; color: hsl(var(--muted-foreground)); font-size: 12px; line-height: 1.8; }
+.profile-access-card form { text-align: right; }
+.profile-access-card label { display: block; margin-bottom: 7px; color: hsl(var(--muted-foreground)); font-size: 11px; font-weight: 800; }
+.profile-access-card .code-input { text-align: center; }
+.profile-access-actions { display: grid; gap: 8px; margin-top: 12px; }
+.profile-access-actions .primary-button, .profile-access-actions .outline-button { width: 100%; }
 .quest-header { display: flex; align-items: center; gap: 15px; margin-bottom: 22px; }
 .back-button { border: 0; background: hsl(var(--muted)); color: hsl(var(--secondary)); border-radius: 11px; width: 39px; height: 39px; display: grid; place-items: center; }
 .back-button:hover { background: hsl(var(--accent)); }

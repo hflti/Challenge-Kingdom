@@ -181,6 +181,7 @@ type ActiveChallenge = {
 
 type ActiveChallenges = Partial<Record<ProfileId, ActiveChallenge>>;
 type SyncedKingdomState = Omit<SavedState, "selectedId">;
+type ProfileAccessAction = "enter" | "switch";
 
 type CloudStateResponse = {
   state: SyncedKingdomState;
@@ -624,6 +625,10 @@ function App() {
   const [finishCodeOpen, setFinishCodeOpen] = useState(false);
   const [finishCode, setFinishCode] = useState("");
   const [finishCodeError, setFinishCodeError] = useState("");
+  const [profileAccessAction, setProfileAccessAction] = useState<ProfileAccessAction | null>(null);
+  const [profileAccessTarget, setProfileAccessTarget] = useState<ProfileId | null>(null);
+  const [profileAccessCode, setProfileAccessCode] = useState("");
+  const [profileAccessError, setProfileAccessError] = useState("");
   const [lockedMission, setLockedMission] = useState<Mission | null>(null);
   const [unlockCode, setUnlockCode] = useState("");
   const [unlockCodeError, setUnlockCodeError] = useState("");
@@ -1134,6 +1139,36 @@ function App() {
     applyActiveChallenge(active);
   };
 
+  const requestProfileAccess = (action: ProfileAccessAction, target: ProfileId | null = null) => {
+    setProfileAccessAction(action);
+    setProfileAccessTarget(target);
+    setProfileAccessCode("");
+    setProfileAccessError("");
+  };
+
+  const cancelProfileAccess = () => {
+    setProfileAccessAction(null);
+    setProfileAccessTarget(null);
+    setProfileAccessCode("");
+    setProfileAccessError("");
+  };
+
+  const verifyProfileAccess = () => {
+    if (profileAccessCode !== parentCode) {
+      setProfileAccessCode("");
+      setProfileAccessError("الرمز غير صحيح. اطلب مساعدة ولي الأمر.");
+      return;
+    }
+    const action = profileAccessAction;
+    const target = profileAccessTarget;
+    cancelProfileAccess();
+    if (action === "enter" && target) {
+      chooseProfile(target);
+    } else if (action === "switch") {
+      setScreen("choose");
+    }
+  };
+
   const startMission = (nextMission: Mission) => {
     if (points >= mapFinishPoints) return;
     if (mission && !pointResult) {
@@ -1503,7 +1538,19 @@ function App() {
 
   if (screen === "choose" || !selectedId) {
     return (
-      <ProfileChooser onChoose={chooseProfile} />
+      <>
+        <ProfileChooser onChoose={(id) => requestProfileAccess("enter", id)} />
+        {profileAccessAction && (
+          <ProfileAccessGate
+            action={profileAccessAction}
+            code={profileAccessCode}
+            error={profileAccessError}
+            onCode={(value) => { setProfileAccessCode(value); setProfileAccessError(""); }}
+            onVerify={verifyProfileAccess}
+            onCancel={cancelProfileAccess}
+          />
+        )}
+      </>
     );
   }
   const activeProfile = profile ?? profiles[0];
@@ -1531,7 +1578,7 @@ function App() {
           <div className="side-profile" data-testid="display-sidebar-profile">
             <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} />
             <div className="side-profile-copy"><strong>{activeProfile.name}</strong><span>{activeProfile.title}</span></div>
-            <button className="icon-button" data-testid="button-switch-sidebar-profile" aria-label="تبديل البطل" onClick={() => setScreen("choose")}><RefreshCcw size={15} /></button>
+            <button className="icon-button" data-testid="button-switch-sidebar-profile" aria-label="تبديل البطل" onClick={() => requestProfileAccess("switch")}><RefreshCcw size={15} /></button>
           </div>
         </aside>
 
@@ -1548,7 +1595,7 @@ function App() {
                 {syncStatus === "synced" ? "البيانات متزامنة" : syncStatus === "connecting" ? "جارٍ ربط البيانات…" : "سيُعاد الحفظ عند عودة الاتصال"}
               </span>
               <span className="date-chip" data-testid="text-today-date">{getArabicDate()}</span>
-              <button className="profile-switch" data-testid="button-switch-profile" onClick={() => setScreen("choose")}>
+              <button className="profile-switch" data-testid="button-switch-profile" onClick={() => requestProfileAccess("switch")}>
                 <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} />
                 <span>تبديل البطل</span>
                 <ChevronLeft size={14} />
@@ -1558,7 +1605,7 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => setScreen("choose")} />
+              <ParentView saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => requestProfileAccess("switch")} />
             ) : screen === "home" ? (
               <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
@@ -1574,8 +1621,18 @@ function App() {
       <nav className="mobile-nav" aria-label="التنقل">
         <button data-testid="mobile-nav-quest" className={tab === "quest" ? "active" : ""} onClick={returnToQuest}><House size={18} /><span>المغامرة</span></button>
         <button data-testid="mobile-nav-parent" className={tab === "parent" ? "active" : ""} onClick={() => { setTab("parent"); setScreen("home"); }}><Users size={18} /><span>الوالدان</span></button>
-        <button data-testid="mobile-nav-profile" onClick={() => setScreen("choose")}><UserRound size={18} /><span>الأبطال</span></button>
+        <button data-testid="mobile-nav-profile" onClick={() => requestProfileAccess("switch")}><UserRound size={18} /><span>الأبطال</span></button>
       </nav>
+      {profileAccessAction && (
+        <ProfileAccessGate
+          action={profileAccessAction}
+          code={profileAccessCode}
+          error={profileAccessError}
+          onCode={(value) => { setProfileAccessCode(value); setProfileAccessError(""); }}
+          onVerify={verifyProfileAccess}
+          onCancel={cancelProfileAccess}
+        />
+      )}
     </div>
   );
 }
@@ -1642,6 +1699,54 @@ function ProfileChooser({ onChoose }: { onChoose: (id: ProfileId) => void }) {
         </div>
         <footer className="choose-foot"><LockKeyhole size={12} style={{ verticalAlign: "middle", marginLeft: 4 }} /> مساحة عائلية محفوظة على هذا الجهاز</footer>
       </div>
+    </div>
+  );
+}
+
+function ProfileAccessGate({
+  action,
+  code,
+  error,
+  onCode,
+  onVerify,
+  onCancel,
+}: {
+  action: ProfileAccessAction;
+  code: string;
+  error: string;
+  onCode: (value: string) => void;
+  onVerify: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="profile-access-backdrop" role="presentation">
+      <section className="profile-access-card" role="dialog" aria-modal="true" aria-labelledby="profile-access-title" data-testid="panel-profile-access">
+        <div className="profile-access-icon"><LockKeyhole size={24} /></div>
+        <div className="eyebrow" style={{ justifyContent: "center" }}>بوابة العائلة</div>
+        <h2 id="profile-access-title">{action === "enter" ? "افتح ملف البطل" : "تأكيد تبديل البطل"}</h2>
+        <p>{action === "enter" ? "أدخل رمز ولي الأمر لفتح هذا الملف ومتابعة رحلته." : "تبديل البطل يحتاج موافقة ولي الأمر حتى تبقى لكل بطل رحلته الخاصة."}</p>
+        <form onSubmit={(event) => { event.preventDefault(); onVerify(); }}>
+          <label htmlFor="profile-access-code">رمز ولي الأمر</label>
+          <input
+            id="profile-access-code"
+            className="code-input"
+            data-testid="input-profile-access-code"
+            type="password"
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={4}
+            value={code}
+            onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))}
+            aria-describedby={error ? "profile-access-error" : undefined}
+            autoFocus
+          />
+          {error && <p className="form-error" id="profile-access-error" data-testid="status-profile-access-error">{error}</p>}
+          <div className="profile-access-actions">
+            <button className="primary-button" type="submit" data-testid="button-verify-profile-access"><KeyRound size={16} /> تحقق وافتح</button>
+            <button className="outline-button" type="button" data-testid="button-cancel-profile-access" onClick={onCancel}><ArrowLeft size={16} /> إلغاء</button>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }
