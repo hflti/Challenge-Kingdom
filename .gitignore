@@ -36,6 +36,8 @@ npm-debug.log
 yarn-error.log
 testem.log
 /typings
+artifacts/challenge-kingdom/public/api-config.php
+artifacts/challenge-kingdom/dist/public/api-config.php
 
 # System Files
 .DS_Store

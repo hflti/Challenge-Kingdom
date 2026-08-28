@@ -206,6 +206,9 @@ const timeUpAlertSeconds = 15;
 const timeUpDecisionSeconds = 120;
 const parentCode = "1230";
 const defaultExtraChallenge: ExtraChallengeSettings = { title: "التحدي الإضافي", duration: 10 * 60, rewardPoints: 10 };
+const kingdomApiUrl = import.meta.env.VITE_KINGDOM_API_URL?.trim()
+  || (import.meta.env.PROD ? "./api.php" : "/api/kingdom-state");
+const kingdomApiSaveMethod = import.meta.env.PROD ? "POST" : "PUT";
 
 function readSavedState(): SavedState {
   const fallback: SavedState = {
@@ -775,7 +778,7 @@ function App() {
   const pullCloudState = useCallback(async (force = false, apply = true) => {
     if (!familyCode) return "missing" as const;
     try {
-      const response = await fetch("/api/kingdom-state", {
+      const response = await fetch(kingdomApiUrl, {
         headers: { "x-family-code": familyCode },
         cache: "no-store",
       });
@@ -808,8 +811,8 @@ function App() {
     try {
       do {
         pendingCloudSaveRef.current = false;
-        const response = await fetch("/api/kingdom-state", {
-          method: "PUT",
+        const response = await fetch(kingdomApiUrl, {
+          method: kingdomApiSaveMethod,
           headers: {
             "Content-Type": "application/json",
             "x-family-code": familyCode,
