@@ -437,6 +437,14 @@
 .answer-result strong { font-size: 14px; }
 .answer-result span { font-size: 11px; color: hsl(var(--muted-foreground)); }
 .failure-result { color: hsl(var(--destructive)); background: rgba(191,77,58,.09); border: 1px solid rgba(191,77,58,.2); }
+.completion-choice-card { max-width: 390px; margin: 20px auto; padding: 18px; display: grid; justify-items: center; gap: 6px; color: hsl(var(--secondary)); background: linear-gradient(135deg, rgba(244,190,57,.22), hsl(var(--card))); border: 1px solid rgba(188,139,34,.3); border-radius: 18px; }
+.completion-choice-icon { width: 48px; height: 48px; display: grid; place-items: center; color: hsl(var(--secondary)); background: hsl(var(--accent)); border-radius: 15px; margin-bottom: 3px; }
+.completion-choice-card strong { font-size: 14px; }
+.completion-choice-card span { color: hsl(var(--muted-foreground)); font-size: 11px; }
+.completion-choice-actions { align-items: stretch; }
+.completion-choice-actions button { min-width: 220px; }
+.deduction-button { color: hsl(var(--destructive)); border-color: rgba(191,77,58,.38); }
+.deduction-button:hover { background: rgba(191,77,58,.09); }
 .cancel-mission-button { color: hsl(var(--destructive)); border-color: rgba(191,77,58,.35); }
 .cancel-mission-button:hover { background: rgba(191,77,58,.1); }
 .map-complete { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 22px; padding: 12px 14px; border-radius: 13px; background: rgba(249,240,214,.67); border: 1px solid rgba(117,97,57,.2); }
@@ -465,6 +473,7 @@
 .points-reward-value { color: #fff3a6; font-family: var(--app-font-serif); font-size: clamp(72px, 15vw, 118px); line-height: .85; text-shadow: 0 5px 0 rgba(102,31,55,.35), 0 0 26px rgba(255,243,166,.28); }
 .points-reward-note { max-width: 340px; color: #fffaf0; font-size: 12px; line-height: 1.7; font-weight: 700; }
 .finish-bonus { color: #5d2540; background: #fff3a6; border-radius: 999px; padding: 7px 12px; font-size: 11px; font-weight: 900; margin-top: 4px; }
+.deduction-result { color: #fffaf0; background: rgba(73,25,48,.45); border: 1px solid rgba(255,250,240,.45); }
 .total-points-pill { margin-top: 8px; padding: 8px 14px; background: rgba(37,45,98,.42); border: 1px solid rgba(255,250,240,.5); border-radius: 999px; font-size: 12px; font-weight: 900; }
 .reward-buttons { justify-content: center; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 21px; }
 .parent-view { max-width: 1050px; }

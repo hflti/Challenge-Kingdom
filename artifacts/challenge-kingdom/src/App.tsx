@@ -153,18 +153,22 @@ type SoundPreferences = {
 };
 
 type ActiveChallenge = {
+  challengeId?: string;
   mission: SavedMission;
   seconds: number;
   extensionCount: number;
+  timerEndsAt?: number | null;
   pauseSeconds: number;
   pauseActive?: boolean;
   pauseEndsAt: number | null;
   timeUp: boolean;
+  timeUpAt?: number | null;
   alertSeconds?: number;
   alertEndsAt?: number | null;
   graceSeconds?: number;
   graceEndsAt?: number | null;
   approvalStatus?: "gate" | "rejected";
+  completionChoice?: "pending";
   running: boolean;
   updatedAt: number;
   /** Retained only to restore challenges saved by the previous pause rule. */
@@ -303,7 +307,7 @@ function cloudSyncSignature(state: SavedState, challenges: ActiveChallenges) {
   const stableChallenges = Object.fromEntries(
     Object.entries(challenges).map(([profileId, challenge]) => {
       if (!challenge) return [profileId, null];
-      const { seconds, pauseSeconds, alertSeconds, updatedAt, ...stableChallenge } = challenge;
+      const { seconds, pauseSeconds, alertSeconds, graceSeconds, updatedAt, ...stableChallenge } = challenge;
       return [profileId, stableChallenge];
     }),
   );
@@ -322,8 +326,10 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
   let pauseSeconds = typeof challenge.pauseSeconds === "number" ? challenge.pauseSeconds : (challenge.pauseUsed ? 0 : pauseBudgetSeconds);
   let pauseActive = challenge.pauseActive ?? Boolean(challenge.pauseEndsAt);
   let pauseEndsAt = challenge.pauseEndsAt;
+  let timerEndsAt = challenge.timerEndsAt ?? null;
   let running = challenge.running;
   let timeUp = challenge.timeUp;
+  let timeUpAt = challenge.timeUpAt ?? null;
   let alertSeconds = challenge.alertSeconds ?? 0;
   let alertEndsAt = challenge.alertEndsAt ?? null;
   let graceSeconds = challenge.graceSeconds ?? 0;
@@ -333,31 +339,48 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
     if (pauseEndsAt > now) {
       pauseSeconds = Math.ceil((pauseEndsAt - now) / 1000);
       running = false;
+      timerEndsAt = null;
     } else {
+      const pauseEndedAt = pauseEndsAt;
+      const secondsBeforePause = seconds;
       seconds = Math.max(0, seconds - Math.floor((now - pauseEndsAt) / 1000));
       pauseSeconds = 0;
       pauseActive = false;
       pauseEndsAt = null;
+      timerEndsAt = pauseEndedAt + secondsBeforePause * 1000;
       running = seconds > 0;
       timeUp = seconds === 0;
+      if (timeUp) timeUpAt = pauseEndedAt + secondsBeforePause * 1000;
     }
   } else if (!timeUp && running) {
-    seconds = Math.max(0, seconds - Math.floor((now - challenge.updatedAt) / 1000));
+    if (timerEndsAt) {
+      seconds = Math.max(0, Math.ceil((timerEndsAt - now) / 1000));
+    } else {
+      // Challenges saved before absolute deadlines were introduced still
+      // recover from their last persisted tick.
+      seconds = Math.max(0, seconds - Math.floor((now - challenge.updatedAt) / 1000));
+      timerEndsAt = now + seconds * 1000;
+    }
     running = seconds > 0;
-    timeUp = seconds === 0;
+    if (seconds === 0) {
+      timeUp = true;
+      timeUpAt = challenge.timerEndsAt ?? challenge.updatedAt + challenge.seconds * 1000;
+      timerEndsAt = null;
+    }
   }
 
-  if (timeUp && alertEndsAt && alertEndsAt > now) {
-    alertSeconds = Math.ceil((alertEndsAt - now) / 1000);
-  } else if (timeUp) {
-    alertSeconds = 0;
-    alertEndsAt = null;
-    if (graceEndsAt && graceEndsAt > now) {
-      graceSeconds = Math.ceil((graceEndsAt - now) / 1000);
-    } else if (!graceEndsAt) {
-      graceEndsAt = now + timeUpDecisionSeconds * 1000;
+  if (timeUp) {
+    timeUpAt ??= challenge.updatedAt;
+    alertEndsAt ??= timeUpAt + timeUpAlertSeconds * 1000;
+    graceEndsAt ??= alertEndsAt + timeUpDecisionSeconds * 1000;
+    if (now < alertEndsAt) {
+      alertSeconds = Math.ceil((alertEndsAt - now) / 1000);
       graceSeconds = timeUpDecisionSeconds;
+    } else if (now < graceEndsAt) {
+      alertSeconds = 0;
+      graceSeconds = Math.ceil((graceEndsAt - now) / 1000);
     } else {
+      alertSeconds = 0;
       graceSeconds = 0;
     }
   } else {
@@ -365,9 +388,26 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
     alertEndsAt = null;
     graceSeconds = 0;
     graceEndsAt = null;
+    timeUpAt = null;
   }
 
-  return { ...challenge, seconds, pauseSeconds, pauseActive, pauseEndsAt, timeUp, alertSeconds, alertEndsAt, graceSeconds, graceEndsAt, running, updatedAt: now };
+  return {
+    ...challenge,
+    challengeId: challenge.challengeId ?? `legacy-${challenge.mission.id}-${challenge.updatedAt}`,
+    seconds,
+    timerEndsAt,
+    pauseSeconds,
+    pauseActive,
+    pauseEndsAt,
+    timeUp,
+    timeUpAt,
+    alertSeconds,
+    alertEndsAt,
+    graceSeconds,
+    graceEndsAt,
+    running,
+    updatedAt: now,
+  };
 }
 
 function getInitialActiveChallenge() {
@@ -512,9 +552,12 @@ function App() {
     const active = getInitialActiveChallenge();
     return active ? missionFromSaved(active.mission) : null;
   });
+  const [activeChallengeId, setActiveChallengeId] = useState<string | null>(() => getInitialActiveChallenge()?.challengeId ?? null);
   const [seconds, setSeconds] = useState(() => getInitialActiveChallenge()?.seconds ?? 0);
+  const [timerEndsAt, setTimerEndsAt] = useState<number | null>(() => getInitialActiveChallenge()?.timerEndsAt ?? null);
   const [timerRunning, setTimerRunning] = useState(() => getInitialActiveChallenge()?.running ?? false);
   const [timeUp, setTimeUp] = useState(() => getInitialActiveChallenge()?.timeUp ?? false);
+  const [timeUpAt, setTimeUpAt] = useState<number | null>(() => getInitialActiveChallenge()?.timeUpAt ?? null);
   const [pauseSeconds, setPauseSeconds] = useState(() => getInitialActiveChallenge()?.pauseSeconds ?? pauseBudgetSeconds);
   const [pauseActive, setPauseActive] = useState(() => getInitialActiveChallenge()?.pauseActive ?? Boolean(getInitialActiveChallenge()?.pauseEndsAt));
   const [pauseEndsAt, setPauseEndsAt] = useState<number | null>(() => getInitialActiveChallenge()?.pauseEndsAt ?? null);
@@ -523,6 +566,7 @@ function App() {
   const [graceSeconds, setGraceSeconds] = useState(() => getInitialActiveChallenge()?.graceSeconds ?? 0);
   const [graceEndsAt, setGraceEndsAt] = useState<number | null>(() => getInitialActiveChallenge()?.graceEndsAt ?? null);
   const [approvalStatus, setApprovalStatus] = useState<"gate" | "rejected" | null>(() => getInitialActiveChallenge()?.approvalStatus ?? null);
+  const [completionChoice, setCompletionChoice] = useState<"pending" | null>(() => getInitialActiveChallenge()?.completionChoice ?? null);
   const [extensionCount, setExtensionCount] = useState(() => getInitialActiveChallenge()?.extensionCount ?? 0);
   const [finishCodeOpen, setFinishCodeOpen] = useState(false);
   const [finishCode, setFinishCode] = useState("");
@@ -536,8 +580,11 @@ function App() {
   const [extraSetupError, setExtraSetupError] = useState("");
   const [familyCode, setFamilyCode] = useState(() => readFamilyCode());
   const [syncStatus, setSyncStatus] = useState<"needs-code" | "connecting" | "synced" | "offline">(() => readFamilyCode() ? "connecting" : "needs-code");
-  const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => getInitialActiveChallenge()?.approvalStatus === "rejected" ? "no" : null);
-  const [pointResult, setPointResult] = useState<{ earned: number; earlyBonus: number; bonus: number; total: number; extensions: number } | null>(null);
+  const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => {
+    const active = getInitialActiveChallenge();
+    return active?.approvalStatus === "rejected" ? "no" : active?.completionChoice === "pending" ? "yes" : null;
+  });
+  const [pointResult, setPointResult] = useState<{ earned: number; earlyBonus: number; deduction: number; bonus: number; total: number; extensions: number } | null>(null);
   const timerWasRunningRef = useRef(timerRunning);
   const timeUpAnnouncedRef = useRef(timeUp);
   const pauseBellPlayedRef = useRef(false);
@@ -548,6 +595,11 @@ function App() {
   const cloudSaveInFlightRef = useRef(false);
   const pendingCloudSaveRef = useRef(false);
   const completedProfileIdRef = useRef<ProfileId | null>(null);
+  const completedChallengeIdRef = useRef<string | null>(null);
+  const completionBasePointsRef = useRef<number | null>(null);
+  const completionBaseCompletedRef = useRef<number | null>(null);
+  const completionPointsDeltaRef = useRef<number | null>(null);
+  const completionCompletedDeltaRef = useRef<number | null>(null);
   const savedRef = useRef(saved);
   const activeChallengesRef = useRef(activeChallenges);
 
@@ -571,11 +623,37 @@ function App() {
     [saved.customMissions, saved.extraChallenge, selectedId],
   );
 
+  const applyActiveChallenge = useCallback((active: ActiveChallenge | null) => {
+    setMission(active ? missionFromSaved(active.mission) : null);
+    setActiveChallengeId(active?.challengeId ?? null);
+    setSeconds(active?.seconds ?? 0);
+    setTimerEndsAt(active?.timerEndsAt ?? null);
+    setTimerRunning(active?.running ?? false);
+    setTimeUp(active?.timeUp ?? false);
+    setTimeUpAt(active?.timeUpAt ?? null);
+    setPauseSeconds(active?.pauseSeconds ?? pauseBudgetSeconds);
+    setPauseActive(active?.pauseActive ?? Boolean(active?.pauseEndsAt));
+    setPauseEndsAt(active?.pauseEndsAt ?? null);
+    setAlertSeconds(active?.alertSeconds ?? 0);
+    setAlertEndsAt(active?.alertEndsAt ?? null);
+    setGraceSeconds(active?.graceSeconds ?? 0);
+    setGraceEndsAt(active?.graceEndsAt ?? null);
+    setApprovalStatus(active?.approvalStatus ?? null);
+    setCompletionChoice(active?.completionChoice ?? null);
+    setAnswerResult(active?.approvalStatus === "rejected" ? "no" : active?.completionChoice === "pending" ? "yes" : null);
+    setExtensionCount(active?.extensionCount ?? 0);
+    timerWasRunningRef.current = active?.running ?? false;
+    timeUpAnnouncedRef.current = active?.timeUp ?? false;
+    pauseBellPlayedRef.current = false;
+  }, []);
+
   const cancelTimedOutMission = useCallback(() => {
     if (!profile || !selectedId) return;
     setTimerRunning(false);
+    setTimerEndsAt(null);
     setMission(null);
     setTimeUp(false);
+    setTimeUpAt(null);
     setAlertSeconds(0);
     setAlertEndsAt(null);
     setGraceSeconds(0);
@@ -583,6 +661,7 @@ function App() {
     setPauseActive(false);
     setPauseEndsAt(null);
     setApprovalStatus(null);
+    setCompletionChoice(null);
     setFinishCodeOpen(false);
     setAnswerResult("no");
     setSaved((currentSaved) => ({
@@ -624,27 +703,12 @@ function App() {
 
     if (!selectedId) return;
     const active = restoreActiveChallenge(remoteChallenges[selectedId]);
-    setMission(active ? missionFromSaved(active.mission) : null);
-    setSeconds(active?.seconds ?? 0);
-    setTimerRunning(active?.running ?? false);
-    setTimeUp(active?.timeUp ?? false);
-    setPauseSeconds(active?.pauseSeconds ?? pauseBudgetSeconds);
-    setPauseActive(active?.pauseActive ?? Boolean(active?.pauseEndsAt));
-    setPauseEndsAt(active?.pauseEndsAt ?? null);
-    setAlertSeconds(active?.alertSeconds ?? 0);
-    setAlertEndsAt(active?.alertEndsAt ?? null);
-    setGraceSeconds(active?.graceSeconds ?? 0);
-    setGraceEndsAt(active?.graceEndsAt ?? null);
-    setApprovalStatus(active?.approvalStatus ?? null);
-    setAnswerResult(active?.approvalStatus === "rejected" ? "no" : null);
-    setExtensionCount(active?.extensionCount ?? 0);
-    timerWasRunningRef.current = active?.running ?? false;
-    timeUpAnnouncedRef.current = active?.timeUp ?? false;
+    applyActiveChallenge(active);
     setScreen((current) => {
       if (active) return active.approvalStatus ? "gate" : "quest";
       return current === "quest" || current === "gate" ? "home" : current;
     });
-  }, [selectedId]);
+  }, [applyActiveChallenge, selectedId]);
 
   const pullCloudState = useCallback(async (force = false, apply = true) => {
     if (!familyCode) return "missing" as const;
@@ -678,6 +742,7 @@ function App() {
     }
 
     cloudSaveInFlightRef.current = true;
+    let completionConflictRetried = false;
     try {
       do {
         pendingCloudSaveRef.current = false;
@@ -692,6 +757,11 @@ function App() {
             activeChallenges: activeChallengesRef.current,
             version: cloudVersionRef.current,
             completedProfileId: completedProfileIdRef.current ?? undefined,
+            completedChallengeId: completedChallengeIdRef.current ?? undefined,
+            completionBasePoints: completionBasePointsRef.current ?? undefined,
+            completionBaseCompleted: completionBaseCompletedRef.current ?? undefined,
+            completionPointsDelta: completionPointsDeltaRef.current ?? undefined,
+            completionCompletedDelta: completionCompletedDeltaRef.current ?? undefined,
           }),
           cache: "no-store",
           keepalive,
@@ -699,9 +769,20 @@ function App() {
 
         if (response.status === 409) {
           if (completedProfileIdRef.current) {
-            await pullCloudState(false, false);
-            pendingCloudSaveRef.current = true;
-            continue;
+            if (!completionConflictRetried) {
+              completionConflictRetried = true;
+              await pullCloudState(false, false);
+              pendingCloudSaveRef.current = true;
+              continue;
+            }
+            completedProfileIdRef.current = null;
+            completedChallengeIdRef.current = null;
+            completionBasePointsRef.current = null;
+            completionBaseCompletedRef.current = null;
+            completionPointsDeltaRef.current = null;
+            completionCompletedDeltaRef.current = null;
+            await pullCloudState(true);
+            return;
           }
           await pullCloudState();
           return;
@@ -712,6 +793,11 @@ function App() {
         cloudVersionRef.current = payload.version;
         if (completedProfileIdRef.current && !payload.activeChallenges[completedProfileIdRef.current]) {
           completedProfileIdRef.current = null;
+          completedChallengeIdRef.current = null;
+          completionBasePointsRef.current = null;
+          completionBaseCompletedRef.current = null;
+          completionPointsDeltaRef.current = null;
+          completionCompletedDeltaRef.current = null;
         }
         setSyncStatus("synced");
       } while (pendingCloudSaveRef.current);
@@ -823,45 +909,54 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!timerRunning) return;
+    if (!timerRunning || !timerEndsAt || timeUp) return;
     timerWasRunningRef.current = true;
-    const tick = window.setInterval(() => {
-      setSeconds((current) => {
-        if (current <= 1) {
-          setTimerRunning(false);
-          return 0;
-        }
-        return current - 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(tick);
-  }, [timerRunning]);
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000));
+      setSeconds((current) => current === remaining ? current : remaining);
+      if (remaining === 0) setTimerRunning(false);
+    };
+    tick();
+    const interval = window.setInterval(tick, 500);
+    return () => window.clearInterval(interval);
+  }, [timeUp, timerEndsAt, timerRunning]);
 
   useEffect(() => {
     if (!mission || timerRunning || seconds !== 0 || timeUp || !timerWasRunningRef.current || timeUpAnnouncedRef.current) return;
     timerWasRunningRef.current = false;
     timeUpAnnouncedRef.current = true;
+    const endedAt = timerEndsAt ?? Date.now();
+    const nextAlertEndsAt = endedAt + timeUpAlertSeconds * 1000;
+    const nextGraceEndsAt = nextAlertEndsAt + timeUpDecisionSeconds * 1000;
+    const now = Date.now();
+    setTimerEndsAt(null);
     setTimeUp(true);
-    setAlertSeconds(timeUpAlertSeconds);
-    setAlertEndsAt(Date.now() + timeUpAlertSeconds * 1000);
-    playSound("alarm");
-  }, [mission, seconds, timeUp, timerRunning]);
+    setTimeUpAt(endedAt);
+    setAlertEndsAt(nextAlertEndsAt);
+    setAlertSeconds(Math.max(0, Math.ceil((nextAlertEndsAt - now) / 1000)));
+    setGraceEndsAt(nextGraceEndsAt);
+    setGraceSeconds(now < nextAlertEndsAt ? timeUpDecisionSeconds : Math.max(0, Math.ceil((nextGraceEndsAt - now) / 1000)));
+    if (now < nextAlertEndsAt) playSound("alarm");
+  }, [mission, seconds, timeUp, timerEndsAt, timerRunning]);
 
   useEffect(() => {
-    if (!pauseActive || pauseSeconds <= 0) return;
-    const pauseTick = window.setInterval(() => {
-      setPauseSeconds((current) => {
-        if (current <= 1) {
-          setPauseActive(false);
-          setPauseEndsAt(null);
-          setTimerRunning(true);
-          return 0;
-        }
-        return current - 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(pauseTick);
-  }, [pauseActive, pauseSeconds]);
+    if (!pauseActive || !pauseEndsAt) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((pauseEndsAt - Date.now()) / 1000));
+      setPauseSeconds((current) => current === remaining ? current : remaining);
+      if (remaining === 0) {
+        const resumedTimerEndsAt = pauseEndsAt + seconds * 1000;
+        timerWasRunningRef.current = true;
+        setPauseActive(false);
+        setPauseEndsAt(null);
+        setTimerEndsAt(resumedTimerEndsAt);
+        setTimerRunning(true);
+      }
+    };
+    tick();
+    const interval = window.setInterval(tick, 500);
+    return () => window.clearInterval(interval);
+  }, [pauseActive, pauseEndsAt, seconds]);
 
   useEffect(() => {
     if (!pauseActive) {
@@ -875,64 +970,78 @@ function App() {
   }, [pauseActive, pauseSeconds]);
 
   useEffect(() => {
-    if (alertSeconds <= 0) return;
-    const alertTick = window.setInterval(() => {
-      setAlertSeconds((current) => {
-        if (current <= 1) {
-          setAlertEndsAt(null);
-          return 0;
-        }
-        return current - 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(alertTick);
-  }, [alertSeconds]);
+    if (!timeUp || !alertEndsAt) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((alertEndsAt - Date.now()) / 1000));
+      setAlertSeconds((current) => current === remaining ? current : remaining);
+    };
+    tick();
+    const interval = window.setInterval(tick, 500);
+    return () => window.clearInterval(interval);
+  }, [alertEndsAt, timeUp]);
 
   useEffect(() => {
-    if (!timeUp || alertSeconds > 0 || graceSeconds > 0) return;
-    if (graceEndsAt && graceEndsAt <= Date.now()) {
-      cancelTimedOutMission();
-      return;
-    }
-    if (graceEndsAt) return;
-    setGraceSeconds(timeUpDecisionSeconds);
-    setGraceEndsAt(Date.now() + timeUpDecisionSeconds * 1000);
-  }, [alertSeconds, cancelTimedOutMission, graceEndsAt, graceSeconds, timeUp]);
-
-  useEffect(() => {
-    if (!timeUp || alertSeconds > 0 || graceSeconds <= 0) return;
-    const graceTick = window.setInterval(() => {
-      setGraceSeconds((current) => {
-        if (current <= 1) {
-          cancelTimedOutMission();
-          return 0;
-        }
-        return current - 1;
-      });
-    }, 1000);
-    return () => window.clearInterval(graceTick);
-  }, [alertSeconds, cancelTimedOutMission, graceSeconds, timeUp]);
+    if (!timeUp || alertSeconds > 0 || !graceEndsAt) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((graceEndsAt - Date.now()) / 1000));
+      setGraceSeconds((current) => current === remaining ? current : remaining);
+      if (remaining === 0) cancelTimedOutMission();
+    };
+    tick();
+    const interval = window.setInterval(tick, 500);
+    return () => window.clearInterval(interval);
+  }, [alertSeconds, cancelTimedOutMission, graceEndsAt, timeUp]);
 
   useEffect(() => {
     if (!selectedId || !mission) return;
     const persisted: ActiveChallenge = {
+      challengeId: activeChallengeId ?? `legacy-${mission.id}-${Date.now()}`,
       mission: { id: mission.id, title: mission.title, description: mission.description, duration: mission.duration, rewardPoints: mission.rewardPoints, requiresCode: mission.requiresCode },
       seconds,
       extensionCount,
+      timerEndsAt,
       pauseSeconds,
       pauseActive,
       pauseEndsAt,
       timeUp,
+      timeUpAt,
       alertSeconds,
       alertEndsAt,
       graceSeconds,
       graceEndsAt,
       approvalStatus: approvalStatus ?? undefined,
+      completionChoice: completionChoice ?? undefined,
       running: timerRunning,
       updatedAt: Date.now(),
     };
-    setActiveChallenges((current) => ({ ...current, [selectedId]: persisted }));
-  }, [selectedId, mission, seconds, extensionCount, pauseSeconds, pauseActive, pauseEndsAt, timeUp, alertSeconds, alertEndsAt, graceSeconds, graceEndsAt, approvalStatus, timerRunning]);
+    setActiveChallenges((current) => {
+      const next = { ...current, [selectedId]: persisted };
+      activeChallengesRef.current = next;
+      return next;
+    });
+  }, [selectedId, activeChallengeId, mission, seconds, extensionCount, timerEndsAt, pauseSeconds, pauseActive, pauseEndsAt, timeUp, timeUpAt, alertSeconds, alertEndsAt, graceSeconds, graceEndsAt, approvalStatus, completionChoice, timerRunning]);
+
+  useEffect(() => {
+    const reconcileFromClock = () => {
+      if (!selectedId) return;
+      const active = restoreActiveChallenge(activeChallengesRef.current[selectedId]);
+      if (!active) return;
+      const nextChallenges = { ...activeChallengesRef.current, [selectedId]: active };
+      activeChallengesRef.current = nextChallenges;
+      setActiveChallenges(nextChallenges);
+      applyActiveChallenge(active);
+      if (active.approvalStatus) setScreen("gate");
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden) reconcileFromClock();
+    };
+    window.addEventListener("focus", reconcileFromClock);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", reconcileFromClock);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [applyActiveChallenge, selectedId]);
 
   const chooseProfile = (id: ProfileId) => {
     const active = restoreActiveChallenge(activeChallenges[id]);
@@ -942,24 +1051,8 @@ function App() {
     setUnlockCodeError("");
     setTab("quest");
     setScreen(active ? (active.approvalStatus ? "gate" : "quest") : "home");
-    setMission(active ? missionFromSaved(active.mission) : null);
-    setSeconds(active?.seconds ?? 0);
-    setTimerRunning(active?.running ?? false);
-    setTimeUp(active?.timeUp ?? false);
     setFinishCodeOpen(false);
-    setPauseSeconds(active?.pauseSeconds ?? (active?.pauseUsed ? 0 : pauseBudgetSeconds));
-    setPauseActive(active?.pauseActive ?? Boolean(active?.pauseEndsAt));
-    setPauseEndsAt(active?.pauseEndsAt ?? null);
-    setAlertSeconds(active?.alertSeconds ?? 0);
-    setAlertEndsAt(active?.alertEndsAt ?? null);
-    setGraceSeconds(active?.graceSeconds ?? 0);
-    setGraceEndsAt(active?.graceEndsAt ?? null);
-    setApprovalStatus(active?.approvalStatus ?? null);
-    setAnswerResult(active?.approvalStatus === "rejected" ? "no" : null);
-    setExtensionCount(active?.extensionCount ?? 0);
-    timerWasRunningRef.current = active?.running ?? false;
-    timeUpAnnouncedRef.current = active?.timeUp ?? false;
-    pauseBellPlayedRef.current = false;
+    applyActiveChallenge(active);
   };
 
   const startMission = (nextMission: Mission) => {
@@ -972,9 +1065,12 @@ function App() {
       return;
     }
     setMission(nextMission);
+    setActiveChallengeId(crypto.randomUUID());
     setSeconds(nextMission.duration);
+    setTimerEndsAt(null);
     setTimerRunning(false);
     setTimeUp(false);
+    setTimeUpAt(null);
     setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
@@ -988,6 +1084,7 @@ function App() {
     setGraceSeconds(0);
     setGraceEndsAt(null);
     setApprovalStatus(null);
+    setCompletionChoice(null);
     setExtensionCount(0);
     timerWasRunningRef.current = false;
     timeUpAnnouncedRef.current = false;
@@ -1048,11 +1145,21 @@ function App() {
     setExtraSetupError("");
   };
 
+  const startTimer = () => {
+    if (!mission || seconds <= 0 || timeUp) return;
+    timerWasRunningRef.current = true;
+    setTimerEndsAt(Date.now() + seconds * 1000);
+    setTimerRunning(true);
+  };
+
   const extendMission = () => {
     if (!mission || alertSeconds > 0 || graceSeconds <= 0) return;
     const nextCount = extensionCount + 1;
-    setSeconds(extensionDuration(mission.duration, nextCount));
+    const nextSeconds = extensionDuration(mission.duration, nextCount);
+    setSeconds(nextSeconds);
+    setTimerEndsAt(Date.now() + nextSeconds * 1000);
     setTimeUp(false);
+    setTimeUpAt(null);
     setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
@@ -1061,6 +1168,7 @@ function App() {
     setAlertEndsAt(null);
     setGraceSeconds(0);
     setGraceEndsAt(null);
+    setCompletionChoice(null);
     setTimerRunning(true);
     timerWasRunningRef.current = true;
     timeUpAnnouncedRef.current = false;
@@ -1070,6 +1178,7 @@ function App() {
     if (!mission || !timerRunning || pauseSeconds <= 0 || timeUp) return;
     timerWasRunningRef.current = false;
     setTimerRunning(false);
+    setTimerEndsAt(null);
     setPauseActive(true);
     setPauseEndsAt(Date.now() + pauseSeconds * 1000);
   };
@@ -1079,6 +1188,7 @@ function App() {
     timerWasRunningRef.current = true;
     setPauseActive(false);
     setPauseEndsAt(null);
+    setTimerEndsAt(Date.now() + seconds * 1000);
     setTimerRunning(true);
   };
 
@@ -1089,19 +1199,20 @@ function App() {
       return;
     }
     setTimerRunning(false);
+    setTimerEndsAt(null);
     setPauseActive(false);
     setPauseEndsAt(null);
     setFinishCodeError("");
     setFinishCodeOpen(false);
     setAnswerResult(null);
+    setCompletionChoice(null);
     setApprovalStatus("gate");
     setScreen("gate");
   };
 
   const openEarlyFinishCode = () => {
     if (!mission || timeUp || alertSeconds > 0) return;
-    timerWasRunningRef.current = true;
-    setTimerRunning(true);
+    if (!timerRunning) startTimer();
     setPauseActive(false);
     setPauseEndsAt(null);
     setFinishCodeOpen(true);
@@ -1115,47 +1226,68 @@ function App() {
     setFinishCodeError("");
   };
 
+  const completeMission = (deduction: 0 | 2 | 4 | 6) => {
+    if (!profile || !mission) return;
+    playSound("success");
+    const baseEarned = mission.rewardPoints ?? pointsForExtensions(extensionCount);
+    const earlyBonus = !timeUp && seconds > 0 ? 2 : 0;
+    const earned = Math.max(0, baseEarned + earlyBonus - deduction);
+    const currentPoints = saved.points[profile.id];
+    const rawTotal = currentPoints + earned;
+    const bonus = rawTotal >= mapFinishPoints ? Math.max(0, mapTotalPoints - rawTotal) : 0;
+    const total = Math.min(mapTotalPoints, rawTotal + bonus);
+    setPointResult({ earned, earlyBonus, deduction, bonus, total, extensions: extensionCount });
+    const completedState: SavedState = {
+      ...saved,
+      completed: { ...saved.completed, [profile.id]: Math.min(totalStages, saved.completed[profile.id] + 1) },
+      points: { ...saved.points, [profile.id]: total },
+    };
+    const completedChallenges = { ...activeChallenges };
+    delete completedChallenges[profile.id];
+    completedProfileIdRef.current = profile.id;
+    completedChallengeIdRef.current = activeChallengeId;
+    completionBasePointsRef.current = currentPoints;
+    completionBaseCompletedRef.current = saved.completed[profile.id];
+    completionPointsDeltaRef.current = total - currentPoints;
+    completionCompletedDeltaRef.current = completedState.completed[profile.id] - saved.completed[profile.id];
+    savedRef.current = completedState;
+    activeChallengesRef.current = completedChallenges;
+    lastCloudSignatureRef.current = cloudSyncSignature(completedState, completedChallenges);
+    setSaved(completedState);
+    setActiveChallenges(completedChallenges);
+    setMission(null);
+    setActiveChallengeId(null);
+    setTimerRunning(false);
+    setTimerEndsAt(null);
+    setTimeUpAt(null);
+    setPauseActive(false);
+    setPauseEndsAt(null);
+    setAlertSeconds(0);
+    setAlertEndsAt(null);
+    setGraceSeconds(0);
+    setGraceEndsAt(null);
+    setApprovalStatus(null);
+    setCompletionChoice(null);
+    setScreen("reward");
+    void saveCloudState();
+  };
+
   const answerMission = (answer: "yes" | "no") => {
     if (!profile) return;
     if (answer === "yes") {
-      playSound("success");
       setAnswerResult("yes");
-      const baseEarned = mission?.rewardPoints ?? pointsForExtensions(extensionCount);
-      const earlyBonus = !timeUp && seconds > 0 ? 2 : 0;
-      const earned = baseEarned + earlyBonus;
-      const currentPoints = saved.points[profile.id];
-      const rawTotal = currentPoints + earned;
-      const bonus = rawTotal >= mapFinishPoints ? Math.max(0, mapTotalPoints - rawTotal) : 0;
-      const total = Math.min(mapTotalPoints, rawTotal + bonus);
-      setPointResult({ earned, earlyBonus, bonus, total, extensions: extensionCount });
-      const completedState: SavedState = {
-        ...saved,
-        completed: { ...saved.completed, [profile.id]: Math.min(totalStages, saved.completed[profile.id] + 1) },
-        points: { ...saved.points, [profile.id]: total },
-      };
-      const completedChallenges = { ...activeChallenges };
-      delete completedChallenges[profile.id];
-      completedProfileIdRef.current = profile.id;
-      savedRef.current = completedState;
-      activeChallengesRef.current = completedChallenges;
-      lastCloudSignatureRef.current = cloudSyncSignature(completedState, completedChallenges);
-      setSaved(completedState);
-      setActiveChallenges(completedChallenges);
-      setMission(null);
-      setTimerRunning(false);
-      setPauseActive(false);
-      setPauseEndsAt(null);
-      setAlertSeconds(0);
-      setAlertEndsAt(null);
-      setGraceSeconds(0);
-      setGraceEndsAt(null);
-      setApprovalStatus(null);
-      setScreen("reward");
-      void saveCloudState();
+      if (timeUp) {
+        setCompletionChoice("pending");
+        setGraceSeconds(0);
+        setGraceEndsAt(null);
+        return;
+      }
+      completeMission(0);
       return;
     }
     playSound("failure");
     setAnswerResult("no");
+    setCompletionChoice(null);
     setApprovalStatus("rejected");
   };
 
@@ -1172,12 +1304,15 @@ function App() {
 
   const newChallenge = () => {
     setMission(null);
+    setActiveChallengeId(null);
     setLockedMission(null);
     setUnlockCode("");
     setUnlockCodeError("");
     setPointResult(null);
     setTimerRunning(false);
+    setTimerEndsAt(null);
     setTimeUp(false);
+    setTimeUpAt(null);
     setFinishCodeOpen(false);
     setFinishCode("");
     setFinishCodeError("");
@@ -1190,6 +1325,7 @@ function App() {
     setGraceSeconds(0);
     setGraceEndsAt(null);
     setApprovalStatus(null);
+    setCompletionChoice(null);
     setExtensionCount(0);
     timerWasRunningRef.current = false;
     timeUpAnnouncedRef.current = false;
@@ -1325,9 +1461,9 @@ function App() {
             ) : screen === "home" ? (
               <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
-              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={() => setTimerRunning(true)} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
+              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
-              <GateView answerResult={answerResult} onAnswer={answerMission} onBack={leaveMission} onCancel={cancelUnfinishedMission} />
+              <GateView answerResult={answerResult} completionChoice={completionChoice} onAnswer={answerMission} onComplete={completeMission} onBack={leaveMission} onCancel={cancelUnfinishedMission} />
             ) : (
               <RewardView result={pointResult} profileName={activeProfile.name} onNew={newChallenge} />
             )}
@@ -1713,7 +1849,21 @@ function QuestView({
   );
 }
 
-function GateView({ answerResult, onAnswer, onBack, onCancel }: { answerResult: "yes" | "no" | null; onAnswer: (answer: "yes" | "no") => void; onBack: () => void; onCancel: (withPenalty: boolean) => void }) {
+function GateView({
+  answerResult,
+  completionChoice,
+  onAnswer,
+  onComplete,
+  onBack,
+  onCancel,
+}: {
+  answerResult: "yes" | "no" | null;
+  completionChoice: "pending" | null;
+  onAnswer: (answer: "yes" | "no") => void;
+  onComplete: (deduction: 0 | 2 | 4 | 6) => void;
+  onBack: () => void;
+  onCancel: (withPenalty: boolean) => void;
+}) {
   return (
     <section className="gate-card">
       <div className="gate-seal"><LockKeyhole size={34} /></div>
@@ -1729,6 +1879,22 @@ function GateView({ answerResult, onAnswer, onBack, onCancel }: { answerResult: 
             <button className="outline-button cancel-mission-button" data-testid="button-cancel-unfinished-mission" onClick={() => onCancel(true)}><CircleX size={16} /> إلغاء المهمة وخصم نقطتين</button>
           </div>
         </>
+      ) : answerResult === "yes" && completionChoice === "pending" ? (
+        <>
+          <h1 data-testid="heading-completion-score-choice">اختر درجة الإنجاز</h1>
+          <p>تم إنجاز المهمة بعد انتهاء الوقت. اختر اعتماد نقاط التحدي كاملة، أو اطرح منها مقدار الخصم المناسب.</p>
+          <div className="completion-choice-card" data-testid="panel-completion-score-choice">
+            <div className="completion-choice-icon"><Trophy size={24} /></div>
+            <strong>كيف تريد احتساب النتيجة؟</strong>
+            <span>سيُحفظ الاختيار مرة واحدة مع نقاط البطل.</span>
+          </div>
+          <div className="answer-actions completion-choice-actions">
+            <button className="primary-button gold" data-testid="button-complete-full-score" data-sound="success" onClick={() => onComplete(0)}><CircleCheck size={19} /> الإنهاء بالدرجة الكاملة</button>
+            <button className="outline-button deduction-button" data-testid="button-complete-deduction-2" onClick={() => onComplete(2)}><CircleX size={19} /> الإنهاء بخصم نقطتين</button>
+            <button className="outline-button deduction-button" data-testid="button-complete-deduction-4" onClick={() => onComplete(4)}><CircleX size={19} /> الإنهاء بخصم 4 نقاط</button>
+            <button className="outline-button deduction-button" data-testid="button-complete-deduction-6" onClick={() => onComplete(6)}><CircleX size={19} /> الإنهاء بخصم 6 نقاط</button>
+          </div>
+        </>
       ) : (
         <>
           <h1 data-testid="heading-parent-gate">هل تم الإنجاز؟</h1>
@@ -1739,12 +1905,12 @@ function GateView({ answerResult, onAnswer, onBack, onCancel }: { answerResult: 
           </div>
         </>
       )}
-      {answerResult !== "no" && <button className="outline-button" data-testid="button-back-from-gate" onClick={onBack} style={{ marginTop: 17 }}><ArrowLeft size={15} /> العودة إلى الخريطة</button>}
+      {answerResult !== "no" && completionChoice !== "pending" && <button className="outline-button" data-testid="button-back-from-gate" onClick={onBack} style={{ marginTop: 17 }}><ArrowLeft size={15} /> العودة إلى الخريطة</button>}
     </section>
   );
 }
 
-function RewardView({ result, profileName, onNew }: { result: { earned: number; earlyBonus: number; bonus: number; total: number; extensions: number } | null; profileName: string; onNew: () => void }) {
+function RewardView({ result, profileName, onNew }: { result: { earned: number; earlyBonus: number; deduction: number; bonus: number; total: number; extensions: number } | null; profileName: string; onNew: () => void }) {
   const earned = result?.earned ?? 0;
   const bonus = result?.bonus ?? 0;
   return (
@@ -1758,6 +1924,7 @@ function RewardView({ result, profileName, onNew }: { result: { earned: number; 
         <strong className="points-reward-value">+{earned.toLocaleString("ar-SA")}</strong>
         <span className="points-reward-note">{result?.extensions === 0 ? "أنهيتها من المحاولة الأولى، أداء رائع!" : `أنهيتها بعد ${result?.extensions.toLocaleString("ar-SA")} تمديد، واستمر تركيزك حتى النهاية.`}</span>
         {result?.earlyBonus ? <span className="finish-bonus early-finish-bonus">مكافأة الإنهاء المبكر: +{result.earlyBonus.toLocaleString("ar-SA")} نقطتين إضافيتين</span> : null}
+        {result?.deduction ? <span className="finish-bonus deduction-result">تم اعتماد الإنجاز مع خصم {result.deduction.toLocaleString("ar-SA")} نقاط من مكافأة المهمة</span> : null}
         {bonus > 0 && <span className="finish-bonus">مكافأة الفوز: +{bonus.toLocaleString("ar-SA")} لتكتمل الخريطة إلى {mapTotalPoints} نقطة</span>}
         <div className="total-points-pill">مجموع الخريطة: {result?.total.toLocaleString("ar-SA")} / {mapTotalPoints}</div>
       </div>

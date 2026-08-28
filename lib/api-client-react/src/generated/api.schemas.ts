@@ -33,6 +33,21 @@ export interface KingdomStateSaveRequest {
   /** @minimum 1 */
   version: number | null;
   completedProfileId?: KingdomStateSaveRequestCompletedProfileId;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  completedChallengeId?: string;
+  completionBasePoints?: number;
+  /** @minimum 0 */
+  completionBaseCompleted?: number;
+  /** @minimum 0 */
+  completionPointsDelta?: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  completionCompletedDelta?: number;
 }
 
 export interface ErrorResponse {

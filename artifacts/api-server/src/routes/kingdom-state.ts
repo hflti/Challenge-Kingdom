@@ -67,7 +67,22 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
   }
 
   const data = parsed.data;
-  if (data.completedProfileId) {
+  if (Boolean(data.completedProfileId) !== Boolean(data.completedChallengeId)) {
+    res.status(400).json({ error: "Completion requires both profile and challenge identifiers." });
+    return;
+  }
+
+  if (data.completedProfileId && data.completedChallengeId) {
+    if (
+      data.completionBasePoints == null ||
+      data.completionBaseCompleted == null ||
+      data.completionPointsDelta == null ||
+      data.completionCompletedDelta == null
+    ) {
+      res.status(400).json({ error: "Completion requires its starting progress and score changes." });
+      return;
+    }
+
     const profileId = data.completedProfileId;
     const [existing] = await db
       .select()
@@ -75,12 +90,21 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
       .where(eq(kingdomStatesTable.familyKey, familyKey));
 
     if (existing) {
+      const existingActiveChallenges = existing.activeChallenges as KingdomData;
+      const activeChallenge = existingActiveChallenges[profileId] as KingdomData | undefined;
       const existingState = existing.state as KingdomData;
-      const incomingState = data.state as KingdomData;
       const existingPoints = (existingState.points ?? {}) as KingdomData;
-      const incomingPoints = (incomingState.points ?? {}) as KingdomData;
       const existingCompleted = (existingState.completed ?? {}) as KingdomData;
-      const incomingCompleted = (incomingState.completed ?? {}) as KingdomData;
+      const activeChallengeMatches = activeChallenge?.challengeId === data.completedChallengeId;
+      const unchangedBootstrapProgress =
+        !activeChallenge &&
+        existingPoints[profileId] === data.completionBasePoints &&
+        existingCompleted[profileId] === data.completionBaseCompleted;
+      if (existing.version !== data.version || (!activeChallengeMatches && !unchangedBootstrapProgress)) {
+        res.status(409).json({ error: "The challenge changed on another device." });
+        return;
+      }
+
       const activeChallenges = { ...(existing.activeChallenges as KingdomData) };
       delete activeChallenges[profileId];
 
@@ -89,15 +113,31 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
         .set({
           state: {
             ...existingState,
-            points: { ...existingPoints, [profileId]: incomingPoints[profileId] },
-            completed: { ...existingCompleted, [profileId]: incomingCompleted[profileId] },
+            points: {
+              ...existingPoints,
+              [profileId]: Math.min(120, Number(existingPoints[profileId] ?? 0) + data.completionPointsDelta),
+            },
+            completed: {
+              ...existingCompleted,
+              [profileId]: Math.min(120, Number(existingCompleted[profileId] ?? 0) + data.completionCompletedDelta),
+            },
           },
           activeChallenges,
           version: sql`${kingdomStatesTable.version} + 1`,
           updatedAt: new Date(),
         })
-        .where(eq(kingdomStatesTable.familyKey, familyKey))
+        .where(
+          and(
+            eq(kingdomStatesTable.familyKey, familyKey),
+            eq(kingdomStatesTable.version, data.version),
+          ),
+        )
         .returning();
+
+      if (!completedRecord) {
+        res.status(409).json({ error: "The challenge changed on another device." });
+        return;
+      }
 
       res.json(
         SaveKingdomStateResponse.parse({
@@ -109,6 +149,33 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
       );
       return;
     }
+
+    const [createdRecord] = await db
+      .insert(kingdomStatesTable)
+      .values({
+        familyKey,
+        state: data.state,
+        activeChallenges: data.activeChallenges,
+        version: 1,
+        updatedAt: new Date(),
+      })
+      .onConflictDoNothing({ target: kingdomStatesTable.familyKey })
+      .returning();
+
+    if (createdRecord) {
+      res.json(
+        SaveKingdomStateResponse.parse({
+          state: createdRecord.state,
+          activeChallenges: createdRecord.activeChallenges,
+          version: createdRecord.version,
+          updatedAt: createdRecord.updatedAt.toISOString(),
+        }),
+      );
+      return;
+    }
+
+    res.status(409).json({ error: "The family state changed during completion." });
+    return;
   }
 
   const [record] = await db

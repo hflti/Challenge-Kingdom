@@ -122,6 +122,24 @@ components:
         completedProfileId:
           type: string
           enum: [ayham, kinan]
+        completedChallengeId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        completionBasePoints:
+          type: number
+        completionBaseCompleted:
+          type: number
+          minimum: 0
+          multipleOf: 1
+        completionPointsDelta:
+          type: number
+          minimum: 0
+        completionCompletedDelta:
+          type: number
+          minimum: 0
+          maximum: 1
+          multipleOf: 1
       required:
         - state
         - activeChallenges

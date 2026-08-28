@@ -53,13 +53,29 @@ export const SaveKingdomStateHeader = zod.object({
 })
 
 
+export const saveKingdomStateBodyCompletedChallengeIdMax = 128;
+
+export const saveKingdomStateBodyCompletionBaseCompletedMin = 0;
+export const saveKingdomStateBodyCompletionBaseCompletedMultipleOf = 1;
+
+export const saveKingdomStateBodyCompletionPointsDeltaMin = 0;
+
+export const saveKingdomStateBodyCompletionCompletedDeltaMin = 0;
+export const saveKingdomStateBodyCompletionCompletedDeltaMax = 1;
+export const saveKingdomStateBodyCompletionCompletedDeltaMultipleOf = 1;
+
 
 
 export const SaveKingdomStateBody = zod.object({
   "state": zod.record(zod.string(), zod.unknown()),
   "activeChallenges": zod.record(zod.string(), zod.unknown()),
   "version": zod.number().min(1).nullable(),
-  "completedProfileId": zod.enum(['ayham', 'kinan']).optional()
+  "completedProfileId": zod.enum(['ayham', 'kinan']).optional(),
+  "completedChallengeId": zod.string().min(1).max(saveKingdomStateBodyCompletedChallengeIdMax).optional(),
+  "completionBasePoints": zod.number().optional(),
+  "completionBaseCompleted": zod.number().min(saveKingdomStateBodyCompletionBaseCompletedMin).multipleOf(saveKingdomStateBodyCompletionBaseCompletedMultipleOf).optional(),
+  "completionPointsDelta": zod.number().min(saveKingdomStateBodyCompletionPointsDeltaMin).optional(),
+  "completionCompletedDelta": zod.number().min(saveKingdomStateBodyCompletionCompletedDeltaMin).max(saveKingdomStateBodyCompletionCompletedDeltaMax).multipleOf(saveKingdomStateBodyCompletionCompletedDeltaMultipleOf).optional()
 })
 
 
