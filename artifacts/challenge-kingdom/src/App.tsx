@@ -162,6 +162,7 @@ type ActiveChallenge = {
   pauseSeconds: number;
   pauseActive?: boolean;
   pauseStartedAt?: number | null;
+  pauseResumeBlockedUntil?: number | null;
   pausedSecondsTotal?: number;
   pauseRechargeCount?: number;
   pauseEndsAt: number | null;
@@ -200,6 +201,7 @@ const totalStages = mapStages.length;
 const mapTotalPoints = 120;
 const mapFinishPoints = 100;
 const pauseBudgetSeconds = 30;
+const pauseResumeLockSeconds = 5;
 const pauseRechargeIntervalSeconds = 5 * 60;
 const pauseRechargeAmountSeconds = 30;
 const timeUpAlertSeconds = 15;
@@ -338,6 +340,8 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
   if (challenge.pauseRechargeCount == null) pauseSeconds = Math.min(pauseSeconds, pauseBudgetSeconds);
   let pauseActive = challenge.pauseActive ?? Boolean(challenge.pauseEndsAt);
   let pauseStartedAt = challenge.pauseStartedAt ?? (pauseActive ? challenge.updatedAt : null);
+  let pauseResumeBlockedUntil = challenge.pauseResumeBlockedUntil
+    ?? (pauseActive && pauseStartedAt ? pauseStartedAt + pauseResumeLockSeconds * 1000 : null);
   let pausedSecondsTotal = challenge.pausedSecondsTotal ?? 0;
   let pauseRechargeCount = challenge.pauseRechargeCount ?? 0;
   const challengeStartedAt = challenge.challengeStartedAt ?? (challenge.running || pauseActive || challenge.timeUp ? challenge.updatedAt - Math.max(0, challenge.mission.duration - challenge.seconds) * 1000 : null);
@@ -365,6 +369,7 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
       pauseSeconds = 0;
       pauseActive = false;
       pauseStartedAt = null;
+      pauseResumeBlockedUntil = null;
       pauseEndsAt = null;
       timerEndsAt = pauseEndedAt + secondsBeforePause * 1000;
       running = true;
@@ -449,6 +454,7 @@ function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
     pauseSeconds,
     pauseActive,
     pauseStartedAt,
+    pauseResumeBlockedUntil,
     pausedSecondsTotal,
     pauseRechargeCount,
     pauseEndsAt,
@@ -615,6 +621,7 @@ function App() {
   const [pauseSeconds, setPauseSeconds] = useState(() => getInitialActiveChallenge()?.pauseSeconds ?? pauseBudgetSeconds);
   const [pauseActive, setPauseActive] = useState(() => getInitialActiveChallenge()?.pauseActive ?? Boolean(getInitialActiveChallenge()?.pauseEndsAt));
   const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(() => getInitialActiveChallenge()?.pauseStartedAt ?? null);
+  const [pauseResumeBlockedUntil, setPauseResumeBlockedUntil] = useState<number | null>(() => getInitialActiveChallenge()?.pauseResumeBlockedUntil ?? null);
   const [pausedSecondsTotal, setPausedSecondsTotal] = useState(() => getInitialActiveChallenge()?.pausedSecondsTotal ?? 0);
   const [pauseRechargeCount, setPauseRechargeCount] = useState(() => getInitialActiveChallenge()?.pauseRechargeCount ?? 0);
   const [pauseEndsAt, setPauseEndsAt] = useState<number | null>(() => getInitialActiveChallenge()?.pauseEndsAt ?? null);
@@ -696,6 +703,12 @@ function App() {
     setPauseSeconds(active?.pauseSeconds ?? pauseBudgetSeconds);
     setPauseActive(active?.pauseActive ?? Boolean(active?.pauseEndsAt));
     setPauseStartedAt(active?.pauseStartedAt ?? null);
+    setPauseResumeBlockedUntil(
+      active?.pauseResumeBlockedUntil
+      ?? (active?.pauseActive && active.pauseStartedAt
+        ? active.pauseStartedAt + pauseResumeLockSeconds * 1000
+        : null),
+    );
     setPausedSecondsTotal(active?.pausedSecondsTotal ?? 0);
     setPauseRechargeCount(active?.pauseRechargeCount ?? 0);
     setPauseEndsAt(active?.pauseEndsAt ?? null);
@@ -725,6 +738,7 @@ function App() {
     setGraceEndsAt(null);
     setPauseActive(false);
     setPauseEndsAt(null);
+    setPauseResumeBlockedUntil(null);
     setApprovalStatus(null);
     setCompletionChoice(null);
     setFinishCodeOpen(false);
@@ -1031,6 +1045,7 @@ function App() {
         setPausedSecondsTotal((current) => current + Math.max(0, Math.floor((pauseEndsAt - pauseStarted) / 1000)));
         setPauseActive(false);
         setPauseStartedAt(null);
+        setPauseResumeBlockedUntil(null);
         setPauseEndsAt(null);
         setTimerEndsAt(resumedTimerEndsAt);
         setTimerRunning(true);
@@ -1087,6 +1102,7 @@ function App() {
       pauseSeconds,
       pauseActive,
       pauseStartedAt,
+      pauseResumeBlockedUntil,
       pausedSecondsTotal,
       pauseRechargeCount,
       pauseEndsAt,
@@ -1106,7 +1122,7 @@ function App() {
       activeChallengesRef.current = next;
       return next;
     });
-  }, [selectedId, activeChallengeId, mission, seconds, extensionCount, timerEndsAt, challengeStartedAt, pauseSeconds, pauseActive, pauseStartedAt, pausedSecondsTotal, pauseRechargeCount, pauseEndsAt, timeUp, timeUpAt, alertSeconds, alertEndsAt, graceSeconds, graceEndsAt, approvalStatus, completionChoice, timerRunning]);
+  }, [selectedId, activeChallengeId, mission, seconds, extensionCount, timerEndsAt, challengeStartedAt, pauseSeconds, pauseActive, pauseStartedAt, pauseResumeBlockedUntil, pausedSecondsTotal, pauseRechargeCount, pauseEndsAt, timeUp, timeUpAt, alertSeconds, alertEndsAt, graceSeconds, graceEndsAt, approvalStatus, completionChoice, timerRunning]);
 
   useEffect(() => {
     const reconcileFromClock = () => {
@@ -1197,6 +1213,7 @@ function App() {
     setPauseSeconds(pauseBudgetSeconds);
     setPauseActive(false);
     setPauseStartedAt(null);
+    setPauseResumeBlockedUntil(null);
     setPausedSecondsTotal(0);
     setPauseRechargeCount(0);
     setPauseEndsAt(null);
@@ -1305,18 +1322,21 @@ function App() {
     setTimerEndsAt(null);
     setPauseActive(true);
     setPauseStartedAt(now);
+    setPauseResumeBlockedUntil(now + pauseResumeLockSeconds * 1000);
     setPauseEndsAt(now + pauseSeconds * 1000);
   };
 
   const resumeMission = () => {
     if (!mission || !pauseActive || seconds <= 0) return;
     const now = Date.now();
+    if (pauseResumeBlockedUntil && now < pauseResumeBlockedUntil) return;
     const pauseDeadline = pauseEndsAt ?? now;
     const pauseStarted = pauseStartedAt ?? Math.min(now, pauseDeadline - pauseBudgetSeconds * 1000);
     const pauseFinishedAt = Math.min(now, pauseDeadline);
     timerWasRunningRef.current = true;
     setPauseActive(false);
     setPauseStartedAt(null);
+    setPauseResumeBlockedUntil(null);
     setPausedSecondsTotal((current) => current + Math.max(0, Math.floor((pauseFinishedAt - pauseStarted) / 1000)));
     setPauseEndsAt(null);
     setTimerEndsAt(pauseDeadline <= now ? pauseDeadline + seconds * 1000 : now + seconds * 1000);
@@ -1333,6 +1353,7 @@ function App() {
     setTimerEndsAt(null);
     setPauseActive(false);
     setPauseEndsAt(null);
+     setPauseResumeBlockedUntil(null);
     setFinishCodeError("");
     setFinishCodeOpen(false);
     setAnswerResult(null);
@@ -1345,6 +1366,7 @@ function App() {
     if (!mission || timeUp || alertSeconds > 0) return;
     if (!timerRunning) startTimer();
     setPauseActive(false);
+     setPauseResumeBlockedUntil(null);
     setPauseEndsAt(null);
     setFinishCodeOpen(true);
     setFinishCode("");
@@ -1394,6 +1416,7 @@ function App() {
     setChallengeStartedAt(null);
     setPauseActive(false);
     setPauseStartedAt(null);
+     setPauseResumeBlockedUntil(null);
     setPausedSecondsTotal(0);
     setPauseRechargeCount(0);
     setPauseEndsAt(null);
@@ -1456,6 +1479,7 @@ function App() {
     setPauseSeconds(pauseBudgetSeconds);
     setPauseActive(false);
     setPauseStartedAt(null);
+     setPauseResumeBlockedUntil(null);
     setPausedSecondsTotal(0);
     setPauseRechargeCount(0);
     setPauseEndsAt(null);
@@ -1612,7 +1636,7 @@ function App() {
             ) : screen === "home" ? (
               <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
             ) : screen === "quest" && mission ? (
-              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
+              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
               <GateView answerResult={answerResult} completionChoice={completionChoice} onAnswer={answerMission} onComplete={completeMission} onBack={leaveMission} onCancel={cancelUnfinishedMission} />
             ) : (
@@ -1962,6 +1986,7 @@ function QuestView({
   extensionCount,
   pauseActive,
   pauseSeconds,
+  pauseResumeBlockedUntil,
   alertSeconds,
   graceSeconds,
   finishCodeOpen,
@@ -1985,6 +2010,7 @@ function QuestView({
   extensionCount: number;
   pauseActive: boolean;
   pauseSeconds: number;
+  pauseResumeBlockedUntil: number | null;
   alertSeconds: number;
   graceSeconds: number;
   finishCodeOpen: boolean;
@@ -2005,6 +2031,9 @@ function QuestView({
   const progress = mission.duration ? ((mission.duration - seconds) / mission.duration) * 100 : 0;
   const nextExtensionSeconds = extensionDuration(mission.duration, extensionCount + 1);
   const canFinishEarly = seconds < mission.duration || running || pauseActive;
+  const resumeWaitSeconds = pauseActive && pauseResumeBlockedUntil
+    ? Math.max(0, Math.ceil((pauseResumeBlockedUntil - Date.now()) / 1000))
+    : 0;
   return (
     <>
       <div className="quest-header"><button className="back-button" data-testid="button-back-to-missions" aria-label="العودة للمهام" onClick={onBack}><ArrowLeft size={18} /></button><div><div className="eyebrow">ميدان التحدي</div><p className="subtle">أثبت أن تركيزك أقوى من الملل.</p></div></div>
@@ -2013,7 +2042,7 @@ function QuestView({
           <div className="eyebrow"><Icon size={14} /> المهمة النشطة</div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
            <div className={`timer-shell ${running ? "running" : ""} ${pauseActive ? "paused" : ""} ${alertSeconds > 0 ? "alerting" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{timeUp && alertSeconds === 0 && graceSeconds > 0 ? formatTime(graceSeconds) : formatTime(seconds)}</span><span className="timer-label">{pauseActive ? `استراحة ${formatTime(pauseSeconds)}` : alertSeconds > 0 ? `تنبيه النهاية ${formatTime(alertSeconds)}` : timeUp && graceSeconds > 0 ? "مهلة القرار" : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
            {!finishCodeOpen && <div className="quest-actions">
-              {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume}><Play size={16} /> استئناف التحدي</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>}
+               {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume} disabled={resumeWaitSeconds > 0}><Play size={16} /> {resumeWaitSeconds > 0 ? `انتظر ${resumeWaitSeconds} ثوانٍ` : "استئناف التحدي"}</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>}
               {!timeUp && canFinishEarly && <button className="outline-button early-finish-button" data-testid="button-finish-early" onClick={onOpenEarlyFinish}><KeyRound size={16} /> إنهاء المهمة الآن</button>}
             </div>}
             {!timeUp ? finishCodeOpen ? (
@@ -2027,7 +2056,7 @@ function QuestView({
                   <button className="outline-button" type="button" data-testid="button-cancel-finish-code" onClick={onCancelFinishCode}><ArrowLeft size={16} /> العودة للتحدي</button>
                 </div>
               </form>
-            ) : <p className={`quest-note ${pauseActive ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseActive ? `الإيقاف المؤقت جارٍ. يمكنك الاستئناف الآن أو استخدام ما تبقى من الرصيد لاحقاً.` : `رصيد الإيقاف المؤقت: ${formatTime(pauseSeconds)}. يُضاف 00:30 للرصيد ولوقت التحدي كل 5 دقائق من اللعب.`}</p> : (
+             ) : <p className={`quest-note ${pauseActive ? "pause-note" : ""}`}><ShieldCheck size={13} style={{ verticalAlign: "middle", marginLeft: 4 }} /> {pauseActive ? (resumeWaitSeconds > 0 ? `توقف مؤقت. يمكنك الاستمرار بعد ${resumeWaitSeconds} ثوانٍ.` : `الإيقاف المؤقت جارٍ. يمكنك الاستئناف الآن أو استخدام ما تبقى من الرصيد لاحقاً.`) : `رصيد الإيقاف المؤقت: ${formatTime(pauseSeconds)}. يُضاف 00:30 للرصيد ولوقت التحدي كل 5 دقائق من اللعب.`}</p> : (
              <div className="time-up-panel" data-testid="panel-time-up">
                 <div className="time-up-heading"><BellRing size={20} /><strong>انتهى وقت المعركة!</strong><span>{alertSeconds > 0 ? `تنبيه النهاية جارٍ لمدة ${formatTime(alertSeconds)}. انتظر قبل التمديد.` : `لديك مهلة ${formatTime(graceSeconds)} لتمديد الوقت أو إنهاء التحدي، ثم يُلغى التحدي تلقائياً مع خصم نقطتين.`}</span></div>
                {!finishCodeOpen ? (
