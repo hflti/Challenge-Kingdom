@@ -39,6 +39,7 @@ import {
 import ayhamPhoto from "@assets/أيهم_1787868667283.jpeg";
 import kinanPhoto from "@assets/كنان_1787868667282.jpeg";
 import { AdminConsole } from "./components/admin-console";
+import { ChildExtras, defaultChildRewards, normalizeChildRewards, type BoxOpening, type ChildRewardsState } from "./components/child-extras";
 import { accountsApi, type FamilyMember } from "./lib/account-api";
 
 type ProfileId = string;
@@ -132,6 +133,7 @@ type SavedState = {
   completed: Record<ProfileId, number>;
   points: Record<ProfileId, number>;
   customMissions: Record<ProfileId, SavedMission[]>;
+  childRewards: Record<ProfileId, ChildRewardsState>;
   extraChallenge: ExtraChallengeSettings;
 };
 
@@ -201,7 +203,7 @@ const defaultSoundPreferences: SoundPreferences = { enabled: true, volume: 0.55 
 const mapStages = ["بوابة البيت", "غابة القراءة", "ميدان التحدي", "قلعة الحكمة"];
 const totalStages = mapStages.length;
 const mapTotalPoints = 120;
-const mapFinishPoints = 100;
+const mapFinishPoints = mapTotalPoints;
 const pauseBudgetSeconds = 30;
 const pauseResumeLockSeconds = 5;
 const pauseRechargeIntervalSeconds = 5 * 60;
@@ -219,6 +221,7 @@ function readSavedState(): SavedState {
     completed: { ayham: 0, kinan: 0 },
     points: { ayham: 0, kinan: 0 },
     customMissions: { ayham: [], kinan: [] },
+    childRewards: { ayham: defaultChildRewards, kinan: defaultChildRewards },
     extraChallenge: defaultExtraChallenge,
   };
   try {
@@ -231,6 +234,7 @@ function readSavedState(): SavedState {
       completed: { ...fallback.completed, ...(parsed.completed ?? {}) },
       points: { ...fallback.points, ...(parsed.points ?? {}) },
       customMissions: { ...fallback.customMissions, ...(parsed.customMissions ?? {}) },
+      childRewards: Object.fromEntries(Object.entries({ ...fallback.childRewards, ...(parsed.childRewards ?? {}) }).map(([id, value]) => [id, normalizeChildRewards(value)])),
       extraChallenge: {
         title: typeof parsed.extraChallenge?.title === "string" && parsed.extraChallenge.title.trim() ? parsed.extraChallenge.title.trim() : fallback.extraChallenge.title,
         duration: typeof parsed.extraChallenge?.duration === "number" ? parsed.extraChallenge.duration : fallback.extraChallenge.duration,
@@ -270,6 +274,7 @@ function toSyncedKingdomState(state: SavedState): SyncedKingdomState {
     completed: state.completed,
     points: state.points,
     customMissions: state.customMissions,
+    childRewards: state.childRewards,
     extraChallenge: state.extraChallenge,
   };
 }
@@ -281,12 +286,13 @@ function isProfileRecord(value: unknown): value is Record<ProfileId, unknown> {
 function normalizeSyncedKingdomState(value: unknown): SyncedKingdomState | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<SyncedKingdomState>;
-  if (!isProfileRecord(candidate.completed) || !isProfileRecord(candidate.points) || !isProfileRecord(candidate.customMissions)) return null;
+   if (!isProfileRecord(candidate.completed) || !isProfileRecord(candidate.points) || !isProfileRecord(candidate.customMissions)) return null;
 
   return {
     completed: Object.fromEntries(Object.entries(candidate.completed).map(([id, value]) => [id, typeof value === "number" ? value : 0])),
     points: Object.fromEntries(Object.entries(candidate.points).map(([id, value]) => [id, typeof value === "number" ? value : 0])),
     customMissions: Object.fromEntries(Object.entries(candidate.customMissions).map(([id, value]) => [id, Array.isArray(value) ? value as SavedMission[] : []])),
+    childRewards: Object.fromEntries(Object.entries(candidate.childRewards ?? {}).map(([id, value]) => [id, normalizeChildRewards(value)])),
     extraChallenge: {
       title: typeof candidate.extraChallenge?.title === "string" && candidate.extraChallenge.title.trim() ? candidate.extraChallenge.title.trim() : defaultExtraChallenge.title,
       duration: typeof candidate.extraChallenge?.duration === "number" ? candidate.extraChallenge.duration : defaultExtraChallenge.duration,
@@ -828,7 +834,8 @@ function App() {
               completed: { [selectedId]: savedRef.current.completed[selectedId] ?? 0 },
               points: { [selectedId]: savedRef.current.points[selectedId] ?? 0 },
               customMissions: { [selectedId]: savedRef.current.customMissions[selectedId] ?? [] },
-              extraChallenge: defaultExtraChallenge,
+              childRewards: { [selectedId]: savedRef.current.childRewards[selectedId] ?? defaultChildRewards },
+              extraChallenge: {},
             }
           : toSyncedKingdomState(savedRef.current);
         const challengesForSave = isChildInitialState
@@ -929,11 +936,12 @@ function App() {
       if (!cancelled) {
         setFamilyMembers(result.members);
         setSaved((current) => {
-          const next = { ...current, completed: { ...current.completed }, points: { ...current.points }, customMissions: { ...current.customMissions } };
+           const next = { ...current, completed: { ...current.completed }, points: { ...current.points }, customMissions: { ...current.customMissions }, childRewards: { ...current.childRewards } };
           result.members.filter((member) => member.role === "child").forEach((member) => {
             next.completed[member.id] ??= 0;
             next.points[member.id] ??= 0;
             next.customMissions[member.id] ??= [];
+             next.childRewards[member.id] ??= defaultChildRewards;
           });
           return next;
         });
@@ -1242,7 +1250,6 @@ function App() {
   };
 
   const startMission = (nextMission: Mission) => {
-    if (points >= mapFinishPoints) return;
     if (mission && !pointResult) {
       if (mission.id === nextMission.id) {
         playSound("click");
@@ -1446,13 +1453,20 @@ function App() {
     const earned = Math.max(0, baseEarned + earlyBonus - deduction);
     const currentPoints = saved.points[profile.id];
     const rawTotal = currentPoints + earned;
-    const bonus = rawTotal >= mapFinishPoints ? Math.max(0, mapTotalPoints - rawTotal) : 0;
-    const total = Math.min(mapTotalPoints, rawTotal + bonus);
+    const bonus = 0;
+    const total = rawTotal;
     setPointResult({ earned, earlyBonus, deduction, bonus, total, extensions: extensionCount });
     const completedState: SavedState = {
       ...saved,
       completed: { ...saved.completed, [profile.id]: Math.min(totalStages, saved.completed[profile.id] + 1) },
       points: { ...saved.points, [profile.id]: total },
+      childRewards: {
+        ...saved.childRewards,
+        [profile.id]: {
+          ...(saved.childRewards[profile.id] ?? defaultChildRewards),
+          lifetimePoints: (saved.childRewards[profile.id]?.lifetimePoints ?? currentPoints) + earned,
+        },
+      },
     };
     const completedChallenges = { ...activeChallenges };
     delete completedChallenges[profile.id];
@@ -1608,6 +1622,58 @@ function App() {
     }));
   };
 
+  const awardExtraPoints = (amount: number) => {
+    if (!profile || !Number.isFinite(amount) || amount <= 0) return;
+    setSaved((current) => ({
+      ...current,
+      points: { ...current.points, [profile.id]: (current.points[profile.id] ?? 0) + Math.floor(amount) },
+      childRewards: {
+        ...current.childRewards,
+        [profile.id]: {
+          ...(current.childRewards[profile.id] ?? defaultChildRewards),
+          lifetimePoints: (current.childRewards[profile.id]?.lifetimePoints ?? current.points[profile.id] ?? 0) + Math.floor(amount),
+        },
+      },
+    }));
+    playSound("success");
+  };
+
+  const spendRewardPoints = (cost: number, itemId: string) => {
+    if (!profile || !Number.isFinite(cost) || cost < 1) return false;
+    const currentRewards = savedRef.current.childRewards[profile.id] ?? defaultChildRewards;
+    const currentPoints = savedRef.current.points[profile.id] ?? 0;
+    if (currentPoints < cost || currentRewards.purchasedIds.includes(itemId)) return false;
+    setSaved((current) => ({
+      ...current,
+      points: { ...current.points, [profile.id]: (current.points[profile.id] ?? 0) - cost },
+      childRewards: {
+        ...current.childRewards,
+        [profile.id]: {
+          ...(current.childRewards[profile.id] ?? defaultChildRewards),
+          purchasedIds: [...(current.childRewards[profile.id]?.purchasedIds ?? []), itemId],
+        },
+      },
+    }));
+    playSound("success");
+    return true;
+  };
+
+  const openRewardBox = (opening: BoxOpening) => {
+    if (!profile) return;
+    setSaved((current) => {
+      const rewards = current.childRewards[profile.id] ?? defaultChildRewards;
+      if (rewards.openedBoxes.some((item) => item.boxIndex === opening.boxIndex)) return current;
+      return {
+        ...current,
+        childRewards: {
+          ...current.childRewards,
+          [profile.id]: { ...rewards, openedBoxes: [...rewards.openedBoxes, opening] },
+        },
+      };
+    });
+    playSound("success");
+  };
+
   const resetMap = async (enteredCode: string) => {
     if (!profile || !owner) return false;
     try {
@@ -1680,7 +1746,7 @@ function App() {
     return <FamilySyncSetup onConnect={connectFamily} onAdminReveal={revealAdmin} adminOpen={adminOpen} onCloseAdmin={() => setAdminOpen(false)} />;
   }
 
-  if (screen === "choose" || !selectedId) {
+  if (screen === "choose" || !selectedId || !profile) {
     return (
       <>
         <ProfileChooser profiles={availableProfiles} loading={membersLoading} error={membersError} onChoose={(id) => requestProfileAccess("enter", id)} onBack={logout} onLogout={logout} />
@@ -1697,7 +1763,7 @@ function App() {
       </>
     );
   }
-  const activeProfile = profile ?? availableProfiles[0];
+  const activeProfile = profile;
 
   return (
     <div className="kingdom-app" dir="rtl">
@@ -1720,7 +1786,7 @@ function App() {
             </button>
           </nav>
           <div className="side-profile" data-testid="display-sidebar-profile">
-            <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} />
+            {activeProfile.photo ? <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} /> : <span className="mini-avatar">{activeProfile.initials}</span>}
             <div className="side-profile-copy"><strong>{activeProfile.name}</strong><span>{activeProfile.title}</span></div>
             <button className="icon-button" data-testid="button-switch-sidebar-profile" aria-label="تبديل البطل" onClick={() => requestProfileAccess("switch")}><RefreshCcw size={15} /></button>
           </div>
@@ -1740,7 +1806,7 @@ function App() {
               </span>
               <span className="date-chip" data-testid="text-today-date">{getArabicDate()}</span>
               <button className="profile-switch" data-testid="button-switch-profile" onClick={() => requestProfileAccess("switch")}>
-                <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} />
+                {activeProfile.photo ? <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} /> : <span className="mini-avatar">{activeProfile.initials}</span>}
                 <span>تبديل البطل</span>
                 <ChevronLeft size={14} />
               </button>
@@ -1755,7 +1821,7 @@ function App() {
             {tab === "parent" && screen === "home" ? (
               <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => requestProfileAccess("switch")} />
             ) : screen === "home" ? (
-              <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => requestProfileAccess("parent")} />
+               <HomeView profile={activeProfile} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
@@ -1925,6 +1991,7 @@ function HomeView({
   profile,
   completed,
   points,
+  childRewards,
   activeMission,
   missions: availableMissions,
   lockedMission,
@@ -1944,11 +2011,15 @@ function HomeView({
   onCreateMission,
   onDeleteMission,
   onResetMap,
+  onSpendReward,
+  onOpenRewardBox,
+  onAwardExtraPoints,
   onParent,
 }: {
   profile: Profile;
   completed: number;
   points: number;
+  childRewards: ChildRewardsState;
   activeMission: Mission | null;
   missions: Mission[];
   lockedMission: Mission | null;
@@ -1968,6 +2039,9 @@ function HomeView({
   onCreateMission: (title: string, durationMinutes: number) => void;
   onDeleteMission: (missionId: string) => void;
   onResetMap: (code: string) => Promise<boolean>;
+  onSpendReward: (cost: number, itemId: string) => boolean;
+  onOpenRewardBox: (opening: BoxOpening) => void;
+  onAwardExtraPoints: (amount: number) => void;
   onParent: () => void;
 }) {
   const [taskTitle, setTaskTitle] = useState("");
@@ -2012,7 +2086,7 @@ function HomeView({
               <div className="eyebrow">الفصل الثالث • المهمة اليومية</div>
               <h1 className="display-title">مرحباً يا {profile.name}</h1>
               <p className="subtle">الملل يقترب من أسوار المملكة. هل تفتح صفحة جديدة وتدافع عن كنز المعرفة؟</p>
-              <button className="primary-button gold hero-cta" data-testid="button-start-featured" data-sound="start" onClick={() => onStart(activeMission ?? availableMissions[0])} disabled={points >= mapFinishPoints}>{points >= mapFinishPoints ? "اكتملت المرحلة" : activeMission ? <>استأنف التحدي <Play size={16} /></> : <>ابدأ المهمة <ArrowLeft size={16} /></>}</button>
+              <button className="primary-button gold hero-cta" data-testid="button-start-featured" data-sound="start" onClick={() => onStart(activeMission ?? availableMissions[0])}>{activeMission ? <>استأنف التحدي <Play size={16} /></> : points >= mapFinishPoints ? <>واصل جمع الأوسمة <Star size={16} /></> : <>ابدأ المهمة <ArrowLeft size={16} /></>}</button>
             </div>
             <div className="hero-figure" aria-hidden="true"><div className="cape" /><div className="hero-head" /><div className="hero-shield"><Shield size={19} /></div><Sparkles className="hero-spark one" size={19} /><Star className="hero-spark two" size={16} fill="currentColor" /></div>
           </div>
@@ -2089,7 +2163,7 @@ function HomeView({
         <div className="missions-grid">
              {availableMissions.map((item) => {
             const Icon = item.icon;
-                const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={points >= mapFinishPoints || Boolean(activeMission && activeMission.id !== item.id)}>
+                const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={Boolean(activeMission && activeMission.id !== item.id)}>
                  <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span></div>
                   <h3>{item.title}</h3><p>{item.description}</p>{item.requiresCode && <span className="locked-mission-label"><LockKeyhole size={12} /> يحتاج رمز ولي الأمر • مكافأة {item.rewardPoints?.toLocaleString("ar-SA")} نقطة</span>}<ArrowLeft className="mission-arrow" size={18} />
                </button>;
@@ -2117,6 +2191,7 @@ function HomeView({
             </div>}
         </div>
       </section>
+      <ChildExtras points={points} rewards={childRewards} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} />
     </>
   );
 }

@@ -56,7 +56,7 @@ function childMayWrite(
 ): boolean {
   if (!existing) {
     for (const [key, value] of Object.entries(state)) {
-      if (key === "points" || key === "completed" || key === "customMissions") {
+      if (key === "points" || key === "completed" || key === "customMissions" || key === "childRewards") {
         if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value as KingdomData).some((profileId) => profileId !== memberId)) return false;
       } else if (!emptyDefault(value)) return false;
     }
@@ -65,7 +65,7 @@ function childMayWrite(
   const oldState = existing.state as KingdomData;
   const incomingRest = { ...state };
   const existingRest = { ...oldState };
-  for (const key of ["points", "completed", "customMissions"]) {
+  for (const key of ["points", "completed", "customMissions", "childRewards"]) {
     const incomingMap = (incomingRest[key] ?? {}) as KingdomData;
     const oldMap = (existingRest[key] ?? {}) as KingdomData;
     if (!isDeepStrictEqual(withoutMember(incomingMap, memberId), withoutMember(oldMap, memberId))) return false;
@@ -172,6 +172,8 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
       const existingState = existing.state as KingdomData;
       const existingPoints = (existingState.points ?? {}) as KingdomData;
       const existingCompleted = (existingState.completed ?? {}) as KingdomData;
+      const existingChildRewards = (existingState.childRewards ?? {}) as KingdomData;
+      const incomingChildRewards = ((data.state as KingdomData).childRewards ?? {}) as KingdomData;
       const activeChallengeMatches = activeChallenge?.challengeId === data.completedChallengeId;
       const unchangedBootstrapProgress =
         !activeChallenge &&
@@ -192,11 +194,15 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
             ...existingState,
             points: {
               ...existingPoints,
-              [profileId]: Math.min(120, Number(existingPoints[profileId] ?? 0) + data.completionPointsDelta),
+              [profileId]: Number(existingPoints[profileId] ?? 0) + data.completionPointsDelta,
             },
             completed: {
               ...existingCompleted,
               [profileId]: Math.min(120, Number(existingCompleted[profileId] ?? 0) + data.completionCompletedDelta),
+            },
+            childRewards: {
+              ...existingChildRewards,
+              [profileId]: incomingChildRewards[profileId] ?? existingChildRewards[profileId],
             },
           },
           activeChallenges,

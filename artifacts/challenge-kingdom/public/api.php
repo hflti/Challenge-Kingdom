@@ -342,11 +342,11 @@ function requireMember(PDO $pdo, array $config, string $familyKey): array
 function childCanWrite(array $oldState, array $newState, array $oldActive, array $newActive, string $memberId): bool
 {
     foreach ($oldState as $key => $oldValue) {
-        if (in_array($key, ['points', 'completed', 'customMissions'], true)) continue;
+        if (in_array($key, ['points', 'completed', 'customMissions', 'childRewards'], true)) continue;
         if (!array_key_exists($key, $newState) || encodeJson([$newState[$key]]) !== encodeJson([$oldValue])) return false;
     }
-    foreach ($newState as $key => $_) if (!array_key_exists($key, $oldState) && !in_array($key, ['points', 'completed', 'customMissions'], true)) return false;
-    foreach (['points', 'completed', 'customMissions'] as $key) {
+    foreach ($newState as $key => $_) if (!array_key_exists($key, $oldState) && !in_array($key, ['points', 'completed', 'customMissions', 'childRewards'], true)) return false;
+    foreach (['points', 'completed', 'customMissions', 'childRewards'] as $key) {
         $old = is_array($oldState[$key] ?? null) ? $oldState[$key] : []; $new = is_array($newState[$key] ?? null) ? $newState[$key] : [];
         foreach ($old as $id => $value) if ($id !== $memberId && (!array_key_exists($id, $new) || encodeJson([$new[$id]]) !== encodeJson([$value]))) return false;
         foreach ($new as $id => $_) if ($id !== $memberId && !array_key_exists($id, $old)) return false;
@@ -358,7 +358,7 @@ function childCanWrite(array $oldState, array $newState, array $oldActive, array
 function childInitialStateIsScoped(object $state, object $active, string $memberId): bool
 {
     foreach (get_object_vars($state) as $key => $value) {
-        if (in_array($key, ['points', 'completed', 'customMissions'], true)) {
+        if (in_array($key, ['points', 'completed', 'customMissions', 'childRewards'], true)) {
             if (!is_object($value)) return false;
             foreach (get_object_vars($value) as $id => $_) if ($id !== $memberId) return false;
         } elseif ($value !== null && (!is_object($value) || get_object_vars($value) !== [])) {
@@ -504,7 +504,7 @@ try {
         if ($action === 'admin-delete-member') {
             expectPayload($data,['familyId','memberId','confirm']);if(($data['confirm']??null)!==true)respond(400,['error'=>'Deletion confirmation is required.']);
             $pdo->beginTransaction();$q=$pdo->prepare('SELECT id FROM family_members WHERE id=:member AND family_id=:family FOR UPDATE');$q->execute(['member'=>$data['memberId'],'family'=>$data['familyId']]);if(!$q->fetch()){$pdo->rollBack();respond(404,['error'=>'Member not found.']);}
-            $f=$pdo->prepare('SELECT family_key FROM families WHERE id=:id FOR UPDATE');$f->execute(['id'=>$data['familyId']]);$f=$f->fetch(); if(is_array($f)&&($record=fetchRecord($pdo,$f['family_key'],true))){$state=decodeStoredJson($record['state_json']);$active=decodeStoredJson($record['active_challenges_json']);foreach(['points','completed','customMissions'] as $key)if(is_array($state[$key]??null))unset($state[$key][$data['memberId']]);unset($active[$data['memberId']]);updateRecord($pdo,$f['family_key'],$state,$active,(int)$record['version']);}
+            $f=$pdo->prepare('SELECT family_key FROM families WHERE id=:id FOR UPDATE');$f->execute(['id'=>$data['familyId']]);$f=$f->fetch(); if(is_array($f)&&($record=fetchRecord($pdo,$f['family_key'],true))){$state=decodeStoredJson($record['state_json']);$active=decodeStoredJson($record['active_challenges_json']);foreach(['points','completed','customMissions','childRewards'] as $key)if(is_array($state[$key]??null))unset($state[$key][$data['memberId']]);unset($active[$data['memberId']]);updateRecord($pdo,$f['family_key'],$state,$active,(int)$record['version']);}
             $pdo->prepare('DELETE FROM family_members WHERE id=:id')->execute(['id'=>$data['memberId']]);$pdo->commit();respond(200,['ok'=>true]);
         }
         if ($action === 'admin-change-family-code') {
@@ -627,6 +627,8 @@ try {
                 && ($activeChallenge['challengeId'] ?? null) === $completedChallengeId;
             $existingPoints = is_array($existingState['points'] ?? null) ? $existingState['points'] : [];
             $existingCompleted = is_array($existingState['completed'] ?? null) ? $existingState['completed'] : [];
+            $existingChildRewards = is_array($existingState['childRewards'] ?? null) ? $existingState['childRewards'] : [];
+            $incomingChildRewards = is_array($data['state']['childRewards'] ?? null) ? $data['state']['childRewards'] : [];
             $unchangedBootstrapProgress = $activeChallenge === null
                 && ($existingPoints[$completedProfileId] ?? null) === $completionBasePoints
                 && ($existingCompleted[$completedProfileId] ?? null) === $completionBaseCompleted;
@@ -637,16 +639,17 @@ try {
             }
 
             unset($existingChallenges[$completedProfileId]);
-            $existingPoints[$completedProfileId] = min(
-                120,
-                (float)($existingPoints[$completedProfileId] ?? 0) + $completionPointsDelta
-            );
+            $existingPoints[$completedProfileId] = (float)($existingPoints[$completedProfileId] ?? 0) + $completionPointsDelta;
             $existingCompleted[$completedProfileId] = min(
                 120,
                 (float)($existingCompleted[$completedProfileId] ?? 0) + $completionCompletedDelta
             );
             $existingState['points'] = $existingPoints;
             $existingState['completed'] = $existingCompleted;
+            if (array_key_exists($completedProfileId, $incomingChildRewards)) {
+                $existingChildRewards[$completedProfileId] = $incomingChildRewards[$completedProfileId];
+            }
+            $existingState['childRewards'] = $existingChildRewards;
             updateRecord($pdo, $familyKey, $existingState, $existingChallenges, $existingVersion);
         } else {
             updateRecord(

@@ -462,6 +462,7 @@ router.post("/accounts", async (req, res): Promise<void> => {
             points: omitMemberProgress((stateData.points ?? {}) as JsonMap, member.id),
             completed: omitMemberProgress((stateData.completed ?? {}) as JsonMap, member.id),
             customMissions: omitMemberProgress((stateData.customMissions ?? {}) as JsonMap, member.id),
+            childRewards: omitMemberProgress((stateData.childRewards ?? {}) as JsonMap, member.id),
           },
           activeChallenges: omitMemberProgress(state.activeChallenges as JsonMap, member.id),
           version: sql`${kingdomStatesTable.version} + 1`,
