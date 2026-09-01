@@ -94,26 +94,6 @@ function clientKey(req: Request): string {
   return req.ip || "unknown";
 }
 
-function loginLimited(req: Request): boolean {
-  const attempt = loginAttempts.get(clientKey(req));
-  if (!attempt) return false;
-  if (attempt.resetAt <= Date.now()) {
-    loginAttempts.delete(clientKey(req));
-    return false;
-  }
-  return attempt.count >= LOGIN_MAX_FAILURES;
-}
-
-function recordLoginFailure(req: Request): void {
-  const key = clientKey(req);
-  const current = loginAttempts.get(key);
-  if (!current || current.resetAt <= Date.now()) {
-    loginAttempts.set(key, { count: 1, resetAt: Date.now() + LOGIN_WINDOW_MS });
-    return;
-  }
-  current.count += 1;
-}
-
 function limited(req: Request, scope: string): boolean {
   const key = `${scope}:${clientKey(req)}`;
   const attempt = loginAttempts.get(key);
@@ -137,6 +117,18 @@ function issueToken(version: number): { token: string; expiresAt: string } {
   const payload = Buffer.from(JSON.stringify({ v: version, exp: expiresAtMs })).toString("base64url");
   const signature = createHmac("sha256", applicationSecret()).update(payload).digest("base64url");
   return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAtMs).toISOString() };
+}
+
+async function ensureAdminCredential() {
+  let [credential] = await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID));
+  if (credential) return credential;
+  const [created] = await db.insert(adminCredentialsTable).values({
+    id: ADMIN_CREDENTIAL_ID,
+    codeHash: hashCode(randomUUID()),
+    credentialVersion: 1,
+  }).onConflictDoNothing().returning();
+  credential = created ?? (await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID)))[0];
+  return credential;
 }
 
 async function authorizeAdmin(req: Request): Promise<boolean> {
@@ -277,64 +269,19 @@ router.post("/accounts", async (req, res): Promise<void> => {
       return;
     }
     const revealCode = process.env.ADMIN_REVEAL_CODE;
-    if (validCode(revealCode) && typeof body.code === "string" && sameHash(hashCode(body.code), hashCode(revealCode))) {
-      res.json({ ok: true });
+    const submittedCode = typeof body.code === "string" ? body.code.trim() : body.code;
+    if (validCode(revealCode) && validCode(submittedCode) && sameHash(hashCode(submittedCode), hashCode(revealCode))) {
+      const credential = await ensureAdminCredential();
+      if (!credential) {
+        res.status(503).json({ error: "Administrator access is not configured." });
+        return;
+      }
+      loginAttempts.delete(`admin-reveal:${clientKey(req)}`);
+      res.json({ ok: true, ...issueToken(credential.credentialVersion) });
       return;
     }
     failed(req, "admin-reveal");
     res.status(401).json({ error: "Invalid administrator access code." });
-    return;
-  }
-
-  if (action === "admin-login") {
-    if (loginLimited(req)) {
-      res.status(429).json({ error: "Too many failed attempts. Please try again later." });
-      return;
-    }
-    const submittedCode = typeof body.code === "string" ? body.code.trim() : body.code;
-    if (!validCode(submittedCode)) {
-      recordLoginFailure(req);
-      res.status(400).json({ error: "A valid administrator code is required." });
-      return;
-    }
-    let [credential] = await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID));
-    if (!credential) {
-      const initialCode = process.env.ADMIN_CODE;
-      if (!validCode(initialCode)) {
-        req.log.error("ADMIN_CODE is missing or invalid while initializing administrator credentials");
-        res.status(503).json({ error: "Administrator login is not configured." });
-        return;
-      }
-      const [created] = await db.insert(adminCredentialsTable).values({
-        id: ADMIN_CREDENTIAL_ID,
-        codeHash: hashCode(initialCode),
-        credentialVersion: 1,
-      }).onConflictDoNothing().returning();
-      credential = created ?? (await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID)))[0];
-    }
-    const submittedHash = hashCode(submittedCode);
-    const configuredCode = process.env.ADMIN_CODE;
-    const configuredHash = validCode(configuredCode) ? hashCode(configuredCode) : null;
-    const matchesStoredCredential = Boolean(credential && sameHash(submittedHash, credential.codeHash));
-    const matchesConfiguredRecoveryCode = Boolean(configuredHash && sameHash(submittedHash, configuredHash));
-    if (!credential || (!matchesStoredCredential && !matchesConfiguredRecoveryCode)) {
-      recordLoginFailure(req);
-      res.status(401).json({ error: "Invalid administrator code." });
-      return;
-    }
-    if (!matchesStoredCredential && matchesConfiguredRecoveryCode && configuredHash) {
-      const [rotated] = await db.update(adminCredentialsTable).set({
-        codeHash: configuredHash,
-        credentialVersion: sql`${adminCredentialsTable.credentialVersion} + 1`,
-        updatedAt: new Date(),
-      }).where(and(
-        eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID),
-        eq(adminCredentialsTable.credentialVersion, credential.credentialVersion),
-      )).returning();
-      credential = rotated ?? (await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID)))[0];
-    }
-    loginAttempts.delete(clientKey(req));
-    res.json(issueToken(credential.credentialVersion));
     return;
   }
 
@@ -631,35 +578,6 @@ router.post("/accounts", async (req, res): Promise<void> => {
     }
     if (changed === "collision") {
       res.status(409).json({ error: "That family code is already in use." });
-      return;
-    }
-    res.json({ ok: true });
-    return;
-  }
-
-  if (action === "admin-change-code") {
-    if (!validCode(body.currentCode) || !validCode(body.newCode)) {
-      res.status(400).json({ error: "Administrator codes must be 4 to 64 characters." });
-      return;
-    }
-    const currentCode = body.currentCode;
-    const newCode = body.newCode;
-    const rotated = await db.transaction(async (tx) => {
-      const [credential] = await tx.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID));
-      if (!credential || !sameHash(hashCode(currentCode), credential.codeHash)) return "invalid" as const;
-      const [updated] = await tx.update(adminCredentialsTable).set({
-        codeHash: hashCode(newCode),
-        credentialVersion: sql`${adminCredentialsTable.credentialVersion} + 1`,
-        updatedAt: new Date(),
-      }).where(and(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID), eq(adminCredentialsTable.credentialVersion, credential.credentialVersion))).returning();
-      return updated ? "ok" as const : "conflict" as const;
-    });
-    if (rotated === "invalid") {
-      res.status(401).json({ error: "The current administrator code is incorrect." });
-      return;
-    }
-    if (rotated === "conflict") {
-      res.status(409).json({ error: "The administrator code was changed concurrently. Please retry." });
       return;
     }
     res.json({ ok: true });

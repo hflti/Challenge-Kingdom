@@ -648,6 +648,7 @@ function App() {
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
   const [adminOpen, setAdminOpen] = useState(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
   const memberTokenRef = useRef<string | null>(null);
   const memberRoleRef = useRef<"owner" | "child" | null>(null);
   const [memberToken, setMemberToken] = useState<string | null>(null);
@@ -1741,7 +1742,9 @@ function App() {
 
   const revealAdmin = async (code: string) => {
     try {
-      await accountsApi.revealAdmin(code);
+      const session = await accountsApi.revealAdmin(code);
+      setAdminToken(session.token);
+      setAdminOpen(true);
       return true;
     } catch {
       return false;
@@ -1749,7 +1752,7 @@ function App() {
   };
 
   if (!familyCode) {
-    return <FamilySyncSetup onConnect={connectFamily} onAdminReveal={revealAdmin} onOpenAdmin={() => setAdminOpen(true)} adminOpen={adminOpen} onCloseAdmin={() => setAdminOpen(false)} />;
+    return <FamilySyncSetup onConnect={connectFamily} onAdminReveal={revealAdmin} adminToken={adminToken} adminOpen={adminOpen} onCloseAdmin={() => { setAdminOpen(false); setAdminToken(null); }} />;
   }
 
   if (screen === "choose" || !selectedId || !profile) {
@@ -1857,13 +1860,12 @@ function App() {
   );
 }
 
-function FamilySyncSetup({ onConnect, onAdminReveal, onOpenAdmin, adminOpen, onCloseAdmin }: { onConnect: (code: string) => Promise<void>; onAdminReveal: (code: string) => Promise<boolean>; onOpenAdmin: () => void; adminOpen: boolean; onCloseAdmin: () => void }) {
+function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCloseAdmin }: { onConnect: (code: string) => Promise<void>; onAdminReveal: (code: string) => Promise<boolean>; adminToken: string | null; adminOpen: boolean; onCloseAdmin: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [revealOpen, setRevealOpen] = useState(false);
   const [revealCode, setRevealCode] = useState("");
   const [revealError, setRevealError] = useState("");
-  const [adminRevealed, setAdminRevealed] = useState(false);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1888,7 +1890,6 @@ function FamilySyncSetup({ onConnect, onAdminReveal, onOpenAdmin, adminOpen, onC
     }
     setRevealError("");
     if (await onAdminReveal(normalizedCode)) {
-      setAdminRevealed(true);
       setRevealCode("");
       setRevealOpen(false);
     } else {
@@ -1911,20 +1912,16 @@ function FamilySyncSetup({ onConnect, onAdminReveal, onOpenAdmin, adminOpen, onC
           <button className="primary-button gold" type="submit" data-testid="button-connect-family"><KeyRound size={16} /> ربط المملكة</button>
         </form>
          <div className="admin-entry-tools">
-           {!adminRevealed ? (
-             <>
-               <button className="admin-reveal-trigger" type="button" data-testid="button-open-reveal" aria-expanded={revealOpen} onClick={() => { setRevealOpen((open) => !open); setRevealError(""); }}><Unlock size={16} /> إعادة ضبط</button>
-               {revealOpen && <form className="admin-reveal-form" onSubmit={(event) => void submitReveal(event)}>
-                 <label htmlFor="admin-reveal-code">رمز الكشف</label>
-                 <input id="admin-reveal-code" className="code-input" data-testid="input-admin-reveal-code" type="password" autoComplete="off" minLength={4} maxLength={64} value={revealCode} onChange={(event) => { setRevealCode(event.target.value); setRevealError(""); }} autoFocus />
-                 {revealError && <p className="form-error" data-testid="status-admin-reveal-error">{revealError}</p>}
-                 <button className="secondary-button" type="submit" data-testid="button-submit-admin-reveal"><Unlock size={15} /> أدخل الرمز</button>
-               </form>}
-             </>
-           ) : <button className="admin-login-trigger" type="button" data-testid="button-open-admin-login" onClick={onOpenAdmin}><ShieldCheck size={16} /> دخول الأدمن</button>}
+           <button className="admin-reveal-trigger" type="button" data-testid="button-open-reveal" aria-expanded={revealOpen} onClick={() => { setRevealOpen((open) => !open); setRevealError(""); }}><Unlock size={16} /> إعادة ضبط</button>
+           {revealOpen && <form className="admin-reveal-form" onSubmit={(event) => void submitReveal(event)}>
+             <label htmlFor="admin-reveal-code">رمز الدخول</label>
+             <input id="admin-reveal-code" className="code-input" data-testid="input-admin-reveal-code" type="password" autoComplete="off" minLength={4} maxLength={64} value={revealCode} onChange={(event) => { setRevealCode(event.target.value); setRevealError(""); }} autoFocus />
+             {revealError && <p className="form-error" data-testid="status-admin-reveal-error">{revealError}</p>}
+             <button className="secondary-button" type="submit" data-testid="button-submit-admin-reveal"><ShieldCheck size={15} /> دخول صفحة الأدمن</button>
+           </form>}
          </div>
       </section>
-       {adminOpen && <div className="admin-backdrop"><AdminConsole onClose={onCloseAdmin} /></div>}
+       {adminOpen && adminToken && <div className="admin-backdrop"><AdminConsole initialToken={adminToken} onClose={onCloseAdmin} /></div>}
     </div>
   );
 }

@@ -73,8 +73,7 @@ async function request<T>(
 }
 
 export const accountsApi = {
-  revealAdmin: (code: string) => request<{ ok: true }>("admin-reveal", { method: "POST", body: { code } }),
-  adminLogin: (code: string) => request<AdminSession>("admin-login", { method: "POST", body: { code } }),
+  revealAdmin: (code: string) => request<AdminSession & { ok: true }>("admin-reveal", { method: "POST", body: { code } }),
   adminFamilies: (token: string) => request<{ families: FamilySummary[] }>("admin-families", { token }),
   createFamily: (token: string, name: string, code: string) =>
     request<{ family: Family }>("admin-create-family", { method: "POST", token, body: { name, code } }),
@@ -97,8 +96,6 @@ export const accountsApi = {
     request<unknown>("admin-change-family-name", { method: "POST", token, body: { familyId, name } }),
   deleteFamily: (token: string, familyId: string) =>
     request<unknown>("admin-delete-family", { method: "POST", token, body: { familyId, confirm: true } }),
-  changeAdminCode: (token: string, currentCode: string, newCode: string) =>
-    request<unknown>("admin-change-code", { method: "POST", token, body: { currentCode, newCode } }),
   familyMembers: (familyCode: string) =>
     request<{ family: Family; members: FamilyMember[] }>("family-members", { familyCode }),
   bootstrapFamily: (familyCode: string) =>

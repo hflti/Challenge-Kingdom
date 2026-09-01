@@ -312,24 +312,14 @@ function initializeAdminCredential(PDO $pdo, array $config): void
     $exists = $pdo->query('SELECT id FROM admin_credentials WHERE id = 1')->fetch();
     if (is_array($exists)) return;
     $initial = $config['initial_admin_code'] ?? '';
-    if (!is_string($initial) || trim($initial) === '') return;
+    $credentialSeed = is_string($initial) && strlen(trim($initial)) >= 4 && strlen(trim($initial)) <= 64
+        ? trim($initial)
+        : bin2hex(random_bytes(24));
     $insert = $pdo->prepare('INSERT INTO admin_credentials (id, code_hash) VALUES (1, :hash)');
-    $insert->execute(['hash' => codeHash(validCode($initial), $config)]);
+    $insert->execute(['hash' => codeHash($credentialSeed, $config)]);
 }
 
 function clientIp(): string { return substr((string)($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 0, 64); }
-function throttleLogin(): void
-{
-    $file = sys_get_temp_dir() . '/kingdom-admin-login-' . hash('sha256', clientIp());
-    $now = time(); $hits = [];
-    if (is_file($file)) {
-        $decoded = json_decode((string)file_get_contents($file), true);
-        if (is_array($decoded)) foreach ($decoded as $hit) if (is_int($hit) && $hit > $now - 300) $hits[] = $hit;
-    }
-    if (count($hits) >= 8) respond(429, ['error' => 'Too many login attempts. Please wait a few minutes.']);
-    $hits[] = $now;
-    @file_put_contents($file, json_encode($hits), LOCK_EX);
-}
 function throttle(string $scope, int $limit = 5, int $window = 900): void
 {
     $file = sys_get_temp_dir() . '/kingdom-rate-' . hash('sha256', $scope . '|' . clientIp());
@@ -425,13 +415,13 @@ try {
     $pdo = connectDatabase($config);
     $action = trim((string)($_GET['action'] ?? ''));
     if ($action !== '') {
-        $adminActions = ['admin-families', 'admin-members', 'admin-content', 'admin-create-family', 'admin-create-member', 'admin-delete-member', 'admin-delete-family', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-family-name', 'admin-change-code'];
-        if (!in_array($action, ['admin-reveal', 'admin-login', 'family-members', 'verify-member', 'bootstrap-family', ...$adminActions], true)) respond(404, ['error' => 'Unknown action.']);
-        if (in_array($action, ['admin-reveal', 'admin-login', 'verify-member', 'bootstrap-family'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
+        $adminActions = ['admin-families', 'admin-members', 'admin-content', 'admin-create-family', 'admin-create-member', 'admin-delete-member', 'admin-delete-family', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-family-name'];
+        if (!in_array($action, ['admin-reveal', 'family-members', 'verify-member', 'bootstrap-family', ...$adminActions], true)) respond(404, ['error' => 'Unknown action.']);
+        if (in_array($action, ['admin-reveal', 'verify-member', 'bootstrap-family'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
         if (in_array($action, ['admin-families', 'admin-members', 'family-members'], true) && $method !== 'GET') respond(405, ['error' => 'Method not allowed.']);
-        if (in_array($action, ['admin-create-family', 'admin-create-member', 'admin-delete-member', 'admin-delete-family', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-family-name', 'admin-change-code'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
+        if (in_array($action, ['admin-create-family', 'admin-create-member', 'admin-delete-member', 'admin-delete-family', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-family-name'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
         if ($action === 'admin-content' && !in_array($method, ['GET', 'POST'], true)) respond(405, ['error' => 'Method not allowed.']);
-        if (in_array($action, $adminActions, true) && $action !== 'admin-login') requireAdmin($pdo, $config);
+        if (in_array($action, $adminActions, true)) requireAdmin($pdo, $config);
 
         if ($action === 'admin-reveal') {
             throttle('admin-reveal', 8, 300);
@@ -439,16 +429,13 @@ try {
             expectPayload($data, ['code']);
             $reveal = $config['admin_reveal_code'] ?? '';
             $submittedCode = is_string($data['code']) ? trim($data['code']) : null;
-            if (is_string($reveal) && $reveal !== '' && is_string($submittedCode) && hash_equals(codeHash($reveal, $config), codeHash($submittedCode, $config))) respond(200, ['ok'=>true]);
+            if (is_string($reveal) && $reveal !== '' && is_string($submittedCode) && hash_equals(codeHash($reveal, $config), codeHash($submittedCode, $config))) {
+                initializeAdminCredential($pdo, $config);
+                $credential = $pdo->query('SELECT code_hash, credential_version FROM admin_credentials WHERE id = 1')->fetch();
+                if (!is_array($credential)) respond(503, ['error'=>'Administrator access is not configured.']);
+                respond(200, array_merge(['ok'=>true], adminToken($credential, $config)));
+            }
             respond(401, ['error'=>'Invalid administrator access code.']);
-        }
-        if ($action === 'admin-login') {
-            throttleLogin(); $data = readJsonBody(); expectPayload($data, ['code']);
-            initializeAdminCredential($pdo, $config);
-            $credential = $pdo->query('SELECT code_hash, credential_version FROM admin_credentials WHERE id = 1')->fetch();
-            $submittedCode = is_string($data['code']) ? trim($data['code']) : null;
-            if (!is_array($credential) || !is_string($submittedCode) || !hash_equals($credential['code_hash'], codeHash($submittedCode, $config))) respond(401, ['error' => 'Invalid administrator code.']);
-            respond(200, adminToken($credential, $config));
         }
         if ($action === 'admin-families') {
             $rows = $pdo->query('SELECT f.id, f.name, COUNT(m.id) AS member_count FROM families f LEFT JOIN family_members m ON m.family_id=f.id GROUP BY f.id, f.name ORDER BY f.created_at DESC')->fetchAll();
@@ -564,13 +551,6 @@ try {
         if ($action === 'admin-change-member-code') {
             expectPayload($data,['familyId','memberId','newCode']);$code=validCode($data['newCode']);
             $q=$pdo->prepare('UPDATE family_members SET code_hash=:hash,credential_version=credential_version+1 WHERE id=:member AND family_id=:family');$q->execute(['hash'=>codeHash($code,$config),'member'=>$data['memberId'],'family'=>$data['familyId']]);if($q->rowCount()!==1)respond(404,['error'=>'Member not found.']);respond(200,['ok'=>true]);
-        }
-        if ($action === 'admin-change-code') {
-            expectPayload($data,['currentCode','newCode']);$new=validCode($data['newCode']);$q=$pdo->query('SELECT code_hash FROM admin_credentials WHERE id=1')->fetch();
-            if(!is_array($q)||!is_string($data['currentCode'])||!hash_equals($q['code_hash'],codeHash($data['currentCode'],$config)))respond(401,['error'=>'Invalid administrator code.']);
-            $update=$pdo->prepare('UPDATE admin_credentials SET code_hash=:new_hash,credential_version=credential_version+1,updated_at=UTC_TIMESTAMP(3) WHERE id=1 AND code_hash=:old_hash');
-            $update->execute(['new_hash'=>codeHash($new,$config),'old_hash'=>$q['code_hash']]);
-            if($update->rowCount()!==1)respond(409,['error'=>'Administrator credentials changed during this request.']);respond(200,['ok'=>true]);
         }
         if ($action === 'admin-delete-member') {
             expectPayload($data,['familyId','memberId','confirm']);if(($data['confirm']??null)!==true)respond(400,['error'=>'Deletion confirmation is required.']);

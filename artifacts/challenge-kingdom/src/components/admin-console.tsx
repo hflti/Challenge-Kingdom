@@ -19,15 +19,14 @@ import {
 import { accountsApi, type FamilyMember, type FamilySummary, type MemberRole } from "../lib/account-api";
 import { defaultChildContent, normalizeChildContent, type ChildContentConfig, type RewardKind } from "../lib/child-content";
 
-type AdminConsoleProps = { onClose: () => void };
+type AdminConsoleProps = { initialToken: string; onClose: () => void };
 
 const emptyMember = { role: "child" as MemberRole, name: "", code: "", grade: "", title: "", quote: "", color: "#ea4b5e" };
 const memberColors = ["#ea4b5e", "#e58a46", "#6d6aac", "#34866a", "#3677a7", "#a8577d"];
 const codeIsValid = (value: string) => value.length >= 4 && value.length <= 64;
 
-export function AdminConsole({ onClose }: AdminConsoleProps) {
-  const [token, setToken] = useState<string | null>(null);
-  const [loginCode, setLoginCode] = useState("");
+export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
+  const [token, setToken] = useState<string | null>(initialToken);
   const [families, setFamilies] = useState<FamilySummary[]>([]);
   const [selectedFamily, setSelectedFamily] = useState<FamilySummary | null>(null);
   const [members, setMembers] = useState<FamilyMember[]>([]);
@@ -39,11 +38,9 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
   const [newMember, setNewMember] = useState(emptyMember);
   const [familyCode, setFamilyCode] = useState("");
   const [familyName, setFamilyName] = useState("");
-  const [adminCodes, setAdminCodes] = useState({ currentCode: "", newCode: "" });
   const [memberCode, setMemberCode] = useState<Record<string, string>>({});
   const [showCreateFamily, setShowCreateFamily] = useState(false);
   const [showFamilySettings, setShowFamilySettings] = useState(false);
-  const [showAdminSecurity, setShowAdminSecurity] = useState(false);
   const [showMemberForm, setShowMemberForm] = useState(false);
   const [showContentSettings, setShowContentSettings] = useState(false);
   const [childContent, setChildContent] = useState<ChildContentConfig>(defaultChildContent);
@@ -105,20 +102,6 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
   useEffect(() => {
     if (token) void loadFamilies(token);
   }, [token]);
-
-  const login = async (event: FormEvent) => {
-    event.preventDefault();
-    beginAction();
-    try {
-      const session = await accountsApi.adminLogin(loginCode.trim());
-      setLoginCode("");
-      setToken(session.token);
-    } catch (cause) {
-      showFailure(cause, "تعذر تسجيل الدخول.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const createFamily = async (event: FormEvent) => {
     event.preventDefault();
@@ -277,26 +260,6 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
     }
   };
 
-  const rotateAdminCode = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!token) return;
-    if (!codeIsValid(adminCodes.currentCode) || !codeIsValid(adminCodes.newCode)) {
-      setError("أدخل الرمز الحالي ورمزاً جديداً من 4 إلى 64 حرفاً.");
-      return;
-    }
-    beginAction();
-    try {
-      await accountsApi.changeAdminCode(token, adminCodes.currentCode, adminCodes.newCode);
-      setAdminCodes({ currentCode: "", newCode: "" });
-      setToken(null);
-      setNotice("تم تغيير رمز الأدمن. سجّل الدخول بالرمز الجديد.");
-    } catch (cause) {
-      showFailure(cause, "تعذر تغيير رمز الأدمن.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const saveChildContent = async (event: FormEvent) => {
     event.preventDefault();
     if (!token || !selectedFamily) return;
@@ -322,7 +285,6 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
     setToken(null);
     setSelectedFamily(null);
     setMembers([]);
-    setAdminCodes({ currentCode: "", newCode: "" });
     onClose();
   };
 
@@ -331,16 +293,8 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
       <main className="admin-login-wrapper" dir="rtl">
         <section className="admin-login-box" aria-labelledby="admin-login-title" data-testid="panel-admin-login">
           <div className="admin-icon"><ShieldCheck size={39} aria-hidden="true" /></div>
-          <span className="admin-login-kicker">مركز إدارة مملكة التحديات</span>
-          <h1 className="admin-title" id="admin-login-title">دخول الأدمن</h1>
-          <p className="admin-login-copy">أنشئ الممالك، عيّن ولي الأمر، وأدر ملفات الأطفال من مكان واحد آمن.</p>
-          {notice && <p className="status-message success" role="status" data-testid="status-admin-notice">{notice}</p>}
-          {error && <p className="status-message error" role="alert" data-testid="status-admin-error">{error}</p>}
-          <form className="admin-login-form" onSubmit={login}>
-            <label htmlFor="admin-code">رمز الأدمن</label>
-            <input id="admin-code" className="admin-input code-input" data-testid="input-admin-code" type="password" value={loginCode} onChange={(event) => setLoginCode(event.target.value)} autoComplete="current-password" required />
-            <button className="admin-btn primary full-width" data-testid="button-admin-login" disabled={loading}>{loading ? "جارٍ التحقق…" : "دخول آمن"}</button>
-          </form>
+          <h1 className="admin-title" id="admin-login-title">انتهت جلسة الأدمن</h1>
+          <p className="admin-login-copy">ارجع إلى بوابة «إعادة ضبط» وأدخل رمز الدخول مرة أخرى.</p>
           <button className="admin-btn outline-dark full-width" data-testid="button-admin-back" type="button" onClick={onClose}>العودة للتطبيق</button>
         </section>
       </main>
@@ -384,9 +338,6 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
           ))}
         </nav>
 
-        <footer className="admin-sidebar-footer">
-          <button className="admin-btn outline full-width" data-testid="button-open-admin-security" type="button" onClick={() => setShowAdminSecurity(true)}><KeyRound size={17} /> تغيير رمز الأدمن</button>
-        </footer>
       </aside>
 
       <section className="admin-content">
@@ -503,16 +454,6 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
         </Modal>
       )}
 
-      {showAdminSecurity && (
-        <Modal title="تغيير رمز الأدمن" onClose={() => setShowAdminSecurity(false)} testId="modal-admin-security">
-          <p className="admin-modal-copy">هذه الأداة مخفية عن لوحة العمل الرئيسية. بعد التغيير ستنتهي جلسة الأدمن الحالية.</p>
-          <form onSubmit={rotateAdminCode}>
-            <label className="admin-field"><span>رمز الأدمن الحالي</span><input className="admin-input code-input" data-testid="input-current-admin-code" type="password" value={adminCodes.currentCode} onChange={(event) => setAdminCodes({ ...adminCodes, currentCode: event.target.value })} autoComplete="current-password" required /></label>
-            <label className="admin-field"><span>رمز الأدمن الجديد</span><input className="admin-input code-input" data-testid="input-new-admin-code" type="password" minLength={4} maxLength={64} value={adminCodes.newCode} onChange={(event) => setAdminCodes({ ...adminCodes, newCode: event.target.value })} autoComplete="new-password" required /></label>
-            <div className="admin-form-actions"><button className="admin-btn outline-dark" type="button" data-testid="button-cancel-admin-code" onClick={() => setShowAdminSecurity(false)}>إلغاء</button><button className="admin-btn primary" data-testid="button-change-admin-code" disabled={loading}><KeyRound size={16} /> تغيير رمز الأدمن</button></div>
-          </form>
-        </Modal>
-      )}
     </main>
   );
 }
