@@ -1937,11 +1937,10 @@ function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCl
         <h1 className="display-title">احتفظوا بالمملكة متصلة</h1>
         <p>أدخلوا اسم مستخدم العائلة ورمزها في أي هاتف أو متصفح لتظهر النقاط والمهام والمؤقت كما هي.</p>
          <form autoComplete="off" onSubmit={(event) => void submit(event)}>
-          <label htmlFor="family-username">اسم مستخدم العائلة</label>
-          <input id="family-username" data-testid="input-family-username" type="text" name="family_username" autoComplete="off" inputMode="text" pattern="[A-Za-z0-9]{3,32}" minLength={3} maxLength={32} value={username} onChange={(event) => { setUsername(event.target.value.replace(/[^A-Za-z0-9]/g, "")); setError(""); }} placeholder="Family username" />
-          <label htmlFor="family-code">رمز العائلة</label>
-          <input id="family-code" className="code-input" data-testid="input-family-code" type="password" name="family_access_code" autoComplete="new-password" minLength={4} maxLength={64} value={code} onChange={(event) => { setCode(event.target.value); setError(""); }} placeholder="رمز خاص بالعائلة" aria-describedby="family-code-note" autoFocus />
-          <span id="family-code-note">لا تشاركوا هذا الرمز خارج العائلة.</span>
+          <label htmlFor="family-username">إسم المستخدم</label>
+          <input id="family-username" className="code-input" data-testid="input-family-username" type="text" name="family_username" autoComplete="off" inputMode="text" pattern="[A-Za-z0-9]{3,32}" minLength={3} maxLength={32} value={username} onChange={(event) => { setUsername(event.target.value.replace(/[^A-Za-z0-9]/g, "")); setError(""); }} autoFocus />
+          <label htmlFor="family-code">الرمز</label>
+          <input id="family-code" className="code-input" data-testid="input-family-code" type="password" name="family_access_code" autoComplete="new-password" minLength={4} maxLength={64} value={code} onChange={(event) => { setCode(event.target.value); setError(""); }} />
           {error && <p className="form-error" data-testid="status-family-code-error">{error}</p>}
           <button className="primary-button gold" type="submit" data-testid="button-connect-family"><KeyRound size={16} /> ربط المملكة</button>
         </form>
