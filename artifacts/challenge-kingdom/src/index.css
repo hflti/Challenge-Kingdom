@@ -342,6 +342,10 @@
 .family-sync-card form > span { color: hsl(var(--muted-foreground)); font-size: 10px; }
 .family-sync-card .primary-button { width: 100%; margin-top: 8px; }
 .admin-entry-button { width: 100%; margin-top: 12px; }
+.admin-backdrop {
+  position: fixed; inset: 0; z-index: 120; overflow: auto;
+  background: hsl(var(--background));
+}
 
 /* ADMIN CONSOLE REDESIGN */
 .admin-dashboard {
