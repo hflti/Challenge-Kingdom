@@ -1918,7 +1918,7 @@ function FamilySyncSetup({ onConnect, onAdminReveal, onOpenAdmin, adminOpen, onC
                  <label htmlFor="admin-reveal-code">رمز الكشف</label>
                  <input id="admin-reveal-code" className="code-input" data-testid="input-admin-reveal-code" type="password" autoComplete="off" minLength={4} maxLength={64} value={revealCode} onChange={(event) => { setRevealCode(event.target.value); setRevealError(""); }} autoFocus />
                  {revealError && <p className="form-error" data-testid="status-admin-reveal-error">{revealError}</p>}
-                 <button className="secondary-button" type="submit" data-testid="button-submit-admin-reveal"><Unlock size={15} /> إظهار دخول الأدمن</button>
+                 <button className="secondary-button" type="submit" data-testid="button-submit-admin-reveal"><Unlock size={15} /> أدخل الرمز</button>
                </form>}
              </>
            ) : <button className="admin-login-trigger" type="button" data-testid="button-open-admin-login" onClick={onOpenAdmin}><ShieldCheck size={16} /> دخول الأدمن</button>}
