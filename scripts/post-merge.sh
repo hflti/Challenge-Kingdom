@@ -1,4 +1,8 @@
-#!/bin/bash
-set -e
-pnpm install --frozen-lockfile
-pnpm --filter db push
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Keep post-merge setup non-interactive and consistent with CI/deploy installs.
+export CI=true
+
+pnpm install --frozen-lockfile --prefer-offline
+pnpm --filter @workspace/db run push

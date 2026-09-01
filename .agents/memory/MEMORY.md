@@ -2,3 +2,4 @@
 - [بوابة الأدمن الواحدة](single-admin-gateway.md) — زر «إعادة ضبط» ورمز الكشف هما بوابة الأدمن الوحيدة؛ لا تُعد شاشة أو رمز دخول ثانياً.
 - [مسارات API في إنتاج Replit](replit-production-api-routing.md) — لا تحوّل بناء production إلى api.php؛ استخدم خدمات Node المسجلة تحت /api.
 - [فحوصات جاهزية خدمة API](api-readiness-probes.md) — اجعل جذر الخدمة و/api و/api/healthz تعيد 200؛ النشر قد يفحص /api إضافةً إلى المسار المخصص.
+- [مهلة ما بعد الدمج](post-merge-timeout.md) — تثبيت pnpm مع مزامنة Drizzle يحتاج مهلة تتجاوز 20 ثانية في هذا المشروع.
