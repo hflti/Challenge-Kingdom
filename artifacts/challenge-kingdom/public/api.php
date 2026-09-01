@@ -274,11 +274,18 @@ function validChildContent(mixed $value): array
             || !is_array($item['options'] ?? null) || count($item['options']) < 2 || count($item['options']) > 6
             || !$text($item['answer'] ?? null, 120) || !in_array($item['answer'], $item['options'], true)) respond(400, ['error' => 'A letter game is invalid.']);
         foreach ($item['options'] as $option) if (!$text($option, 120)) respond(400, ['error' => 'A letter-game option is invalid.']);
+        if (count(array_unique($item['options'])) !== count($item['options'])) respond(400, ['error' => 'A letter-game option is duplicated.']);
     }
+    $letterIds = array_map(fn($item) => $item['id'], $letterGames);
+    if (count(array_unique($letterIds)) !== count($letterIds)) respond(400, ['error' => 'Letter-game identifiers must be unique.']);
     if (!is_array($numberQuestions) || count($numberQuestions) !== 5) respond(400, ['error' => 'Exactly five number questions are required.']);
     foreach ($numberQuestions as $item) if (!is_array($item) || !$text($item['id'] ?? null, 80) || !$text($item['prompt'] ?? null, 80) || !is_int($item['answer'] ?? null) || $item['answer'] < -10000 || $item['answer'] > 10000) respond(400, ['error' => 'A number question is invalid.']);
+    $numberIds = array_map(fn($item) => $item['id'], $numberQuestions);
+    if (count(array_unique($numberIds)) !== count($numberIds)) respond(400, ['error' => 'Number-question identifiers must be unique.']);
     if (!is_array($readingStories) || count($readingStories) !== 6) respond(400, ['error' => 'Exactly six stories are required.']);
     foreach ($readingStories as $item) if (!is_array($item) || !$text($item['id'] ?? null, 80) || !$text($item['title'] ?? null, 120) || !$text($item['text'] ?? null, 2500)) respond(400, ['error' => 'A reading story is invalid.']);
+    $storyIds = array_map(fn($item) => $item['id'], $readingStories);
+    if (count(array_unique($storyIds)) !== count($storyIds)) respond(400, ['error' => 'Reading-story identifiers must be unique.']);
     if (!is_array($storeItems) || count($storeItems) !== 12) respond(400, ['error' => 'Exactly twelve store rewards are required.']);
     $ids = [];
     foreach ($storeItems as $item) {
@@ -289,7 +296,9 @@ function validChildContent(mixed $value): array
     foreach ([[$majorRewards, 3], [$displayRewards, 2]] as [$rewards, $count]) {
         if (!is_array($rewards) || count($rewards) !== $count) respond(400, ['error' => 'Box reward values are invalid.']);
         foreach ($rewards as $reward) if (!is_int($reward) || $reward < 1 || $reward > 10000) respond(400, ['error' => 'Box reward values are invalid.']);
+        if (count(array_unique($rewards)) !== count($rewards)) respond(400, ['error' => 'Box reward values must be unique.']);
     }
+    if (min($majorRewards) <= max($displayRewards)) respond(400, ['error' => 'Major box rewards must be greater than display rewards.']);
     return $value;
 }
 

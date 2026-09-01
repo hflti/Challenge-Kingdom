@@ -79,14 +79,89 @@ export const defaultChildContent: ChildContentConfig = {
   displayBoxRewards: [10, 15],
 };
 
+export type ChildContentValidation = {
+  valid: boolean;
+  error?: string;
+};
+
 function text(value: unknown, fallback: string, maxLength: number): string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= maxLength ? value.trim() : fallback;
 }
 
+function validText(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= maxLength;
+}
+
 function stringList(value: unknown, fallback: string[]): string[] {
-  return Array.isArray(value) && value.length >= 2 && value.length <= 6
-    ? value.map((item, index) => text(item, fallback[index] ?? `خيار ${index + 1}`, 120))
-    : fallback;
+  if (!Array.isArray(value) || value.length < 2 || value.length > 6) return fallback;
+  const items = value.map((item, index) => text(item, fallback[index] ?? `خيار ${index + 1}`, 120));
+  return new Set(items).size === items.length ? items : fallback;
+}
+
+function hasUniqueIds(items: Array<{ id: string }>): boolean {
+  return new Set(items.map((item) => item.id)).size === items.length;
+}
+
+export function validateChildContent(value: unknown): ChildContentValidation {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { valid: false, error: "محتوى الطفل غير صالح." };
+  }
+  const content = value as Partial<ChildContentConfig>;
+  if (!Array.isArray(content.letterGames) || content.letterGames.length !== 6 || !hasUniqueIds(content.letterGames)) {
+    return { valid: false, error: "يجب إدخال 6 ألعاب حروف بمعرّفات مختلفة." };
+  }
+  for (const game of content.letterGames) {
+    if (!game || typeof game !== "object" || !validText(game.id, 80) || !validText(game.title, 120) || !validText(game.description, 240) || !validText(game.question, 160)
+      || !Array.isArray(game.options) || game.options.length < 2 || game.options.length > 6
+      || game.options.some((option) => !validText(option, 120))
+      || new Set(game.options).size !== game.options.length
+      || !validText(game.answer, 120) || !game.options.includes(game.answer)) {
+      return { valid: false, error: "تأكد من أن كل لعبة حروف تحتوي خيارات مختلفة وإجابة صحيحة ضمنها." };
+    }
+  }
+  if (!Array.isArray(content.numberQuestions) || content.numberQuestions.length !== 5 || !hasUniqueIds(content.numberQuestions)) {
+    return { valid: false, error: "يجب إدخال 5 مسائل أرقام بمعرّفات مختلفة." };
+  }
+  for (const question of content.numberQuestions) {
+    if (!question || typeof question !== "object" || !validText(question.id, 80) || !validText(question.prompt, 80)
+      || !Number.isInteger(question.answer) || question.answer < -10000 || question.answer > 10000) {
+      return { valid: false, error: "إجابات مسائل الأرقام يجب أن تكون أعداداً صحيحة بين -10000 و10000." };
+    }
+  }
+  if (!Array.isArray(content.readingStories) || content.readingStories.length !== 6 || !hasUniqueIds(content.readingStories)) {
+    return { valid: false, error: "يجب إدخال 6 قصص قراءة بمعرّفات مختلفة." };
+  }
+  for (const story of content.readingStories) {
+    if (!story || typeof story !== "object" || !validText(story.id, 80) || !validText(story.title, 120) || !validText(story.text, 2500)) {
+      return { valid: false, error: "تأكد من اكتمال عناوين ونصوص القصص." };
+    }
+  }
+  if (!Array.isArray(content.storeItems) || content.storeItems.length !== 12) {
+    return { valid: false, error: "يجب إدخال 12 مكافأة في المتجر." };
+  }
+  if (!hasUniqueIds(content.storeItems)) {
+    return { valid: false, error: "معرّفات مكافآت المتجر يجب أن تكون مختلفة." };
+  }
+  for (const item of content.storeItems) {
+    if (!item || typeof item !== "object" || !validText(item.id, 80) || !validText(item.title, 160)
+      || !Number.isInteger(item.cost) || item.cost < 5 || item.cost > 25
+      || !["screen", "treat", "money", "game"].includes(item.kind)) {
+      return { valid: false, error: "أسعار المتجر يجب أن تكون أعداداً صحيحة بين 5 و25." };
+    }
+  }
+  const validRewardList = (list: unknown, length: number) =>
+    Array.isArray(list) && list.length === length
+    && list.every((item) => Number.isInteger(item) && item > 0 && item <= 10000)
+    && new Set(list).size === list.length;
+  if (!validRewardList(content.majorBoxRewards, 3) || !validRewardList(content.displayBoxRewards, 2)) {
+    return { valid: false, error: "يجب إدخال 3 جوائز كبرى وقيمتين تحفيزيتين مختلفتين، بين 1 و10000." };
+  }
+  const majorRewards = content.majorBoxRewards as number[];
+  const displayRewards = content.displayBoxRewards as number[];
+  if (Math.min(...majorRewards) <= Math.max(...displayRewards)) {
+    return { valid: false, error: "كل جائزة كبرى يجب أن تكون أعلى من قيم التحفيز." };
+  }
+  return { valid: true };
 }
 
 export function normalizeChildContent(value: unknown): ChildContentConfig {
@@ -113,6 +188,7 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
         id: text(item && typeof item === "object" ? (item as NumberQuestionContent).id : null, fallback.id, 80),
         prompt: text(item && typeof item === "object" ? (item as NumberQuestionContent).prompt : null, fallback.prompt, 80),
         answer: typeof (item && typeof item === "object" ? (item as NumberQuestionContent).answer : null) === "number"
+          && Number.isFinite((item as NumberQuestionContent).answer)
           ? Math.round((item as NumberQuestionContent).answer)
           : fallback.answer,
       };
@@ -145,9 +221,9 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
     })
     : defaultChildContent.storeItems;
   const rewards = (list: unknown, fallback: number[]) => Array.isArray(list) && list.length === fallback.length && list.every((item) => typeof item === "number" && Number.isFinite(item))
-    ? list.map((item) => Math.max(1, Math.round(item as number)))
+    ? list.map((item) => Math.min(10000, Math.max(1, Math.round(item as number))))
     : fallback;
-  return {
+  const normalized = {
     letterGames,
     numberQuestions,
     readingStories,
@@ -155,4 +231,5 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
     majorBoxRewards: rewards(candidate.majorBoxRewards, defaultChildContent.majorBoxRewards),
     displayBoxRewards: rewards(candidate.displayBoxRewards, defaultChildContent.displayBoxRewards),
   };
+  return validateChildContent(normalized).valid ? normalized : structuredClone(defaultChildContent);
 }

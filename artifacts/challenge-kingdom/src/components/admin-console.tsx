@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { accountsApi, type FamilyMember, type FamilySummary, type MemberRole } from "../lib/account-api";
-import { defaultChildContent, normalizeChildContent, type ChildContentConfig, type RewardKind } from "../lib/child-content";
+import { defaultChildContent, normalizeChildContent, validateChildContent, type ChildContentConfig, type RewardKind } from "../lib/child-content";
 
 type AdminConsoleProps = { initialToken: string; onClose: () => void };
 
@@ -263,6 +263,11 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
   const saveChildContent = async (event: FormEvent) => {
     event.preventDefault();
     if (!token || !selectedFamily) return;
+    const validation = validateChildContent(childContent);
+    if (!validation.valid) {
+      setError(validation.error ?? "راجع إعدادات محتوى الطفل.");
+      return;
+    }
     beginAction();
     try {
       const result = await accountsApi.saveAdminContent(token, selectedFamily.id, childContent);
@@ -500,7 +505,10 @@ function ContentEditorFields({ value, onChange }: { value: ChildContentConfig; o
               <label className="admin-field"><span>الاسم</span><input className="admin-input" data-testid={`input-letter-title-${index}`} maxLength={120} value={game.title} onChange={(event) => updateLetter(index, { title: event.target.value })} required /></label>
               <label className="admin-field"><span>التعليمات</span><input className="admin-input" maxLength={240} value={game.description} onChange={(event) => updateLetter(index, { description: event.target.value })} required /></label>
               <label className="admin-field"><span>السؤال</span><input className="admin-input" maxLength={160} value={game.question} onChange={(event) => updateLetter(index, { question: event.target.value })} required /></label>
-              <label className="admin-field"><span>الخيارات — افصل بينها بعلامة |</span><input className="admin-input" value={game.options.join(" | ")} onChange={(event) => updateLetter(index, { options: event.target.value.split("|").map((item) => item.trim()).filter(Boolean) })} required /></label>
+               <label className="admin-field"><span>الخيارات — افصل بينها بعلامة |</span><input className="admin-input" value={game.options.join(" | ")} onChange={(event) => {
+                 const options = event.target.value.split("|").map((item) => item.trim()).filter(Boolean);
+                 updateLetter(index, { options, answer: options.includes(game.answer) ? game.answer : (options[0] ?? "") });
+               }} required /></label>
               <label className="admin-field"><span>الإجابة الصحيحة</span><select className="admin-input" value={game.answer} onChange={(event) => updateLetter(index, { answer: event.target.value })}>{game.options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
             </fieldset>
           ))}
