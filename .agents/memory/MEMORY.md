@@ -1,3 +1,4 @@
 - [نوافذ الجوال التفاعلية](mobile-overlay-portals.md) — اعرض النوافذ العامة عبر Portal إلى body حتى لا تغيّر الحاويات المتحركة موضع fixed عند تمرير الصفحة.
 - [بوابة الأدمن الواحدة](single-admin-gateway.md) — زر «إعادة ضبط» ورمز الكشف هما بوابة الأدمن الوحيدة؛ لا تُعد شاشة أو رمز دخول ثانياً.
 - [مسارات API في إنتاج Replit](replit-production-api-routing.md) — لا تحوّل بناء production إلى api.php؛ استخدم خدمات Node المسجلة تحت /api.
+- [فحوصات جاهزية خدمة API](api-readiness-probes.md) — اجعل جذر الخدمة و/api و/api/healthz تعيد 200؛ النشر قد يفحص /api إضافةً إلى المسار المخصص.
