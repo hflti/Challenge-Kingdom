@@ -196,7 +196,7 @@ type ActiveChallenge = {
 
 type ActiveChallenges = Partial<Record<ProfileId, ActiveChallenge>>;
 type SyncedKingdomState = Omit<SavedState, "selectedId">;
-type ProfileAccessAction = "enter" | "switch" | "parent";
+type ProfileAccessAction = "enter" | "switch" | "parent" | "protected-feature";
 
 type CloudStateResponse = {
   state: SyncedKingdomState;
@@ -696,6 +696,8 @@ function App() {
   const completionBaseCompletedRef = useRef<number | null>(null);
   const completionPointsDeltaRef = useRef<number | null>(null);
   const completionCompletedDeltaRef = useRef<number | null>(null);
+  const pendingChildUnlockRef = useRef<(() => void) | null>(null);
+  const approvalGateRef = useRef(Boolean(getInitialActiveChallenge()?.approvalStatus));
   const savedRef = useRef(saved);
   const activeChallengesRef = useRef(activeChallenges);
 
@@ -751,6 +753,7 @@ function App() {
     setGraceSeconds(active?.graceSeconds ?? 0);
     setGraceEndsAt(active?.graceEndsAt ?? null);
     setApprovalStatus(active?.approvalStatus ?? null);
+    approvalGateRef.current = Boolean(active?.approvalStatus);
     setCompletionChoice(active?.completionChoice ?? null);
     setAnswerResult(active?.approvalStatus === "rejected" ? "no" : active?.completionChoice === "pending" ? "yes" : null);
     setExtensionCount(active?.extensionCount ?? 0);
@@ -774,6 +777,7 @@ function App() {
     setPauseEndsAt(null);
     setPauseResumeBlockedUntil(null);
     setApprovalStatus(null);
+    approvalGateRef.current = false;
     setCompletionChoice(null);
     setFinishCodeOpen(false);
     setAnswerResult("no");
@@ -806,6 +810,9 @@ function App() {
 
     const remoteChallenges = normalizeActiveChallenges(response.activeChallenges);
     cloudVersionRef.current = response.version;
+    // A verified completion must not be replaced by an older running timer
+    // returned while the newly authorized parent session is being connected.
+    if (approvalGateRef.current) return;
     lastCloudSignatureRef.current = cloudSyncSignature(
       { ...remoteState, selectedId: null },
       remoteChallenges,
@@ -1250,6 +1257,7 @@ function App() {
   };
 
   const cancelProfileAccess = () => {
+    if (profileAccessAction === "protected-feature") pendingChildUnlockRef.current = null;
     setProfileAccessAction(null);
     setProfileAccessTarget(null);
     setProfileAccessCode("");
@@ -1259,15 +1267,19 @@ function App() {
   const verifyProfileAccess = async () => {
     const action = profileAccessAction;
     const target = profileAccessTarget;
-    const member = action === "enter" && target ? familyMembers.find((item) => item.id === target && item.role === "child") : owner;
-    if (!member) { setProfileAccessError(action === "enter" ? "هذا الملف غير متاح." : "أضف ولي أمر من لوحة الإدارة أولاً."); return; }
+    const childId = action === "enter" ? target : action === "protected-feature" ? selectedId : null;
+    const member = childId ? familyMembers.find((item) => item.id === childId && item.role === "child") : owner;
+    if (!member) { setProfileAccessError(action === "enter" || action === "protected-feature" ? "هذا الملف غير متاح." : "أضف ولي أمر من لوحة الإدارة أولاً."); return; }
     try {
-      const session = await accountsApi.verifyMember(familyUsername, familyCode, member.id, profileAccessCode, action === "enter" ? "child" : "owner");
+      const session = await accountsApi.verifyMember(familyUsername, familyCode, member.id, profileAccessCode, action === "enter" || action === "protected-feature" ? "child" : "owner");
       memberTokenRef.current = session.token;
       memberRoleRef.current = session.role;
       setMemberToken(session.token);
+      const onUnlocked = action === "protected-feature" ? pendingChildUnlockRef.current : null;
+      pendingChildUnlockRef.current = null;
       cancelProfileAccess();
       if (action === "enter" && target) chooseProfile(target);
+      else if (action === "protected-feature") onUnlocked?.();
       else if (action === "switch") {
         setScreen("choose");
         memberTokenRef.current = null;
@@ -1280,6 +1292,12 @@ function App() {
     } catch {
       setProfileAccessCode(""); setProfileAccessError("الرمز غير صحيح. حاول مرة أخرى.");
     }
+  };
+
+  const requestChildUnlock = (onUnlocked: () => void) => {
+    if (!profile) return;
+    pendingChildUnlockRef.current = onUnlocked;
+    requestProfileAccess("protected-feature", profile.id);
   };
 
   const startMission = (nextMission: Mission) => {
@@ -1315,6 +1333,7 @@ function App() {
     setGraceSeconds(0);
     setGraceEndsAt(null);
     setApprovalStatus(null);
+    approvalGateRef.current = false;
     setCompletionChoice(null);
     setExtensionCount(0);
     timerWasRunningRef.current = false;
@@ -1325,13 +1344,15 @@ function App() {
   };
 
   const requestMissionStart = (nextMission: Mission) => {
-    if (!nextMission.requiresCode) {
-      startMission(nextMission);
-      return;
-    }
-    setLockedMission(nextMission);
-    setUnlockCode("");
-    setUnlockCodeError("");
+    requestChildUnlock(() => {
+      if (!nextMission.requiresCode) {
+        startMission(nextMission);
+        return;
+      }
+      setLockedMission(nextMission);
+      setUnlockCode("");
+      setUnlockCodeError("");
+    });
   };
 
   const unlockExtraChallenge = async () => {
@@ -1446,8 +1467,8 @@ function App() {
       const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, finishCode, "owner");
       memberTokenRef.current = session.token; setMemberToken(session.token);
       memberRoleRef.current = session.role;
-      void pullCloudState(true);
     } catch { setFinishCode(""); setFinishCodeError("الرمز غير صحيح. حاول مرة أخرى."); return; }
+    timerWasRunningRef.current = false;
     setTimerRunning(false);
     setTimerEndsAt(null);
     setPauseActive(false);
@@ -1458,15 +1479,12 @@ function App() {
     setAnswerResult(null);
     setCompletionChoice(null);
     setApprovalStatus("gate");
+    approvalGateRef.current = true;
     setScreen("gate");
   };
 
   const openEarlyFinishCode = () => {
-    if (!mission || timeUp || alertSeconds > 0) return;
-    if (!timerRunning) startTimer();
-    setPauseActive(false);
-     setPauseResumeBlockedUntil(null);
-    setPauseEndsAt(null);
+    if (!mission || timeUp || alertSeconds > 0 || !timerRunning) return;
     setFinishCodeOpen(true);
     setFinishCode("");
     setFinishCodeError("");
@@ -1531,6 +1549,7 @@ function App() {
     setGraceSeconds(0);
     setGraceEndsAt(null);
     setApprovalStatus(null);
+    approvalGateRef.current = false;
     setCompletionChoice(null);
     setScreen("reward");
     void saveCloudState();
@@ -1594,6 +1613,7 @@ function App() {
     setGraceSeconds(0);
     setGraceEndsAt(null);
     setApprovalStatus(null);
+    approvalGateRef.current = false;
     setCompletionChoice(null);
     setExtensionCount(0);
     timerWasRunningRef.current = false;
@@ -1739,6 +1759,7 @@ function App() {
     setProfileAccessTarget(null);
     setProfileAccessCode("");
     setProfileAccessError("");
+    pendingChildUnlockRef.current = null;
     setFinishCode("");
     setUnlockCode("");
     cloudVersionRef.current = null;
@@ -1784,7 +1805,7 @@ function App() {
   if (screen === "choose" || !selectedId || !profile) {
     return (
       <>
-        <ProfileChooser profiles={availableProfiles} loading={membersLoading} error={membersError} onChoose={(id) => requestProfileAccess("enter", id)} onBack={logout} onLogout={logout} />
+        <ProfileChooser profiles={availableProfiles} profileAvatars={saved.profileAvatars} loading={membersLoading} error={membersError} onChoose={(id) => requestProfileAccess("enter", id)} onBack={logout} onLogout={logout} />
         {profileAccessAction && (
           <ProfileAccessGate
             action={profileAccessAction}
@@ -1821,7 +1842,7 @@ function App() {
             </button>
           </nav>
           <div className="side-profile" data-testid="display-sidebar-profile">
-            {activeProfile.photo ? <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} /> : <span className="mini-avatar">{activeProfile.initials}</span>}
+            <span className="mini-avatar" aria-label={`رمز ${activeProfile.name}`}>{avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)}</span>
             <div className="side-profile-copy"><strong>{activeProfile.name}</strong><span>{activeProfile.title}</span></div>
             <button className="icon-button" data-testid="button-switch-sidebar-profile" aria-label="تبديل البطل" onClick={() => requestProfileAccess("switch")}><RefreshCcw size={15} /></button>
           </div>
@@ -1841,7 +1862,7 @@ function App() {
               </span>
               <span className="date-chip" data-testid="text-today-date">{getArabicDate()}</span>
               <button className="profile-switch" data-testid="button-switch-profile" onClick={() => requestProfileAccess("switch")}>
-                {activeProfile.photo ? <img className="mini-avatar profile-photo" src={activeProfile.photo} alt={`صورة ${activeProfile.name}`} /> : <span className="mini-avatar">{activeProfile.initials}</span>}
+                <span className="mini-avatar" aria-label={`رمز ${activeProfile.name}`}>{avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)}</span>
                 <span>تبديل البطل</span>
                 <ChevronLeft size={14} />
               </button>
@@ -1856,7 +1877,7 @@ function App() {
             {tab === "parent" && screen === "home" ? (
               <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset } }))} />
             ) : screen === "home" ? (
-               <HomeView profile={activeProfile} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onParent={() => requestProfileAccess("parent")} />
+               <HomeView profile={activeProfile} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onRequestChildUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onCancelBeforeStart={newChallenge} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
@@ -1979,6 +2000,7 @@ function InstallAppButton() {
 
 function ProfileChooser({
   profiles: selectableProfiles,
+  profileAvatars,
   loading,
   error,
   onChoose,
@@ -1986,6 +2008,7 @@ function ProfileChooser({
   onLogout,
 }: {
   profiles: Profile[];
+  profileAvatars: Record<ProfileId, string>;
   loading: boolean;
   error: string;
   onChoose: (id: ProfileId) => void;
@@ -2013,7 +2036,7 @@ function ProfileChooser({
             const Icon = item.icon;
             return (
               <button key={item.id} className="profile-card" data-testid={`button-profile-${item.id}`} onClick={() => onChoose(item.id)}>
-                <div className="profile-avatar">{item.photo ? <img className="profile-choose-photo" src={item.photo} alt={`صورة ${item.name}`} /> : <span aria-hidden="true">{item.initials}</span>}<Icon className="profile-avatar-icon" size={47} strokeWidth={1.8} /></div>
+                <div className="profile-avatar"><span aria-hidden="true">{avatarSymbol(profileAvatars[item.id], item.initials)}</span><Icon className="profile-avatar-icon" size={47} strokeWidth={1.8} /></div>
                 <h2>{item.name}</h2>
                 <div className="grade">{item.grade}</div>
                 <p className="quote">«{item.quote}»</p>
@@ -2048,10 +2071,10 @@ function ProfileAccessGate({
       <section className="profile-access-card" role="dialog" aria-modal="true" aria-labelledby="profile-access-title" data-testid="panel-profile-access">
         <div className="profile-access-icon"><LockKeyhole size={24} /></div>
         <div className="eyebrow" style={{ justifyContent: "center" }}>بوابة العائلة</div>
-         <h2 id="profile-access-title">{action === "enter" ? "افتح ملف البطل" : action === "parent" ? "افتح مرصد الوالدين" : "تأكيد تبديل البطل"}</h2>
-         <p>{action === "enter" ? "أدخل رمز الطفل الخاص بهذا الملف." : "أدخل رمز ولي الأمر لإكمال هذا الإجراء."}</p>
+         <h2 id="profile-access-title">{action === "enter" ? "افتح ملف البطل" : action === "protected-feature" ? "افتح ميزة البطل" : action === "parent" ? "افتح مرصد الوالدين" : "تأكيد تبديل البطل"}</h2>
+         <p>{action === "enter" || action === "protected-feature" ? "أدخل رمز الطفل الخاص بهذا الملف." : "أدخل رمز ولي الأمر لإكمال هذا الإجراء."}</p>
         <form onSubmit={(event) => { event.preventDefault(); onVerify(); }}>
-           <label htmlFor="profile-access-code">{action === "enter" ? "رمز الطفل" : "رمز ولي الأمر"}</label>
+           <label htmlFor="profile-access-code">{action === "enter" || action === "protected-feature" ? "رمز الطفل" : "رمز ولي الأمر"}</label>
           <input
             id="profile-access-code"
             className="code-input"
@@ -2104,6 +2127,7 @@ function HomeView({
   onSpendReward,
   onOpenRewardBox,
   onAwardExtraPoints,
+  onRequestChildUnlock,
   onParent,
 }: {
   profile: Profile;
@@ -2134,6 +2158,7 @@ function HomeView({
   onSpendReward: (cost: number, itemId: string) => boolean;
   onOpenRewardBox: (opening: BoxOpening) => void;
   onAwardExtraPoints: (amount: number) => void;
+  onRequestChildUnlock: (onUnlocked: () => void) => void;
   onParent: () => void;
 }) {
   const [taskTitle, setTaskTitle] = useState("");
@@ -2283,8 +2308,7 @@ function HomeView({
             </div>}
         </div>
       </section>
-      {/* TODO(main merge): pass profile.name and this preset avatar to ChildExtras when its public props accept child identity. */}
-      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} />
+      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onRequestChildUnlock={onRequestChildUnlock} />
     </>
   );
 }
@@ -2345,7 +2369,7 @@ function QuestView({
   const Icon = mission.icon;
   const progress = mission.duration ? ((mission.duration - seconds) / mission.duration) * 100 : 0;
   const nextExtensionSeconds = extensionDuration(mission.duration, extensionCount + 1);
-  const canFinishEarly = seconds < mission.duration || running || pauseActive;
+  const canFinishEarly = running;
   const resumeWaitSeconds = pauseActive && pauseResumeBlockedUntil
     ? Math.max(0, Math.ceil((pauseResumeBlockedUntil - Date.now()) / 1000))
     : 0;
@@ -2356,10 +2380,10 @@ function QuestView({
         <section className="quest-card" data-testid="panel-active-quest">
           <div className="eyebrow"><Icon size={14} /> المهمة النشطة <span className="card-avatar quest-avatar" aria-label="رمز البطل">{avatar}</span></div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
            <div className={`timer-shell ${running ? "running" : ""} ${pauseActive ? "paused" : ""} ${alertSeconds > 0 ? "alerting" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{timeUp && alertSeconds === 0 && graceSeconds > 0 ? formatTime(graceSeconds) : formatTime(seconds)}</span><span className="timer-label">{pauseActive ? `استراحة ${formatTime(pauseSeconds)}` : alertSeconds > 0 ? `تنبيه النهاية ${formatTime(alertSeconds)}` : timeUp && graceSeconds > 0 ? "مهلة القرار" : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
-           {!finishCodeOpen && <div className="quest-actions">
+           <div className="quest-actions">
                {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume} disabled={resumeWaitSeconds > 0}><Play size={16} /> {resumeWaitSeconds > 0 ? `انتظر ${resumeWaitSeconds} ثوانٍ` : "استئناف التحدي"}</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <><button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>{!timeUp && <button className="outline-button cancel-before-start" type="button" data-testid="button-cancel-before-start" onClick={onCancelBeforeStart}><CircleX size={16} /> إلغاء قبل البدء</button>}</>}
-              {!timeUp && canFinishEarly && <button className="outline-button early-finish-button" data-testid="button-finish-early" onClick={onOpenEarlyFinish}><KeyRound size={16} /> إنهاء المهمة الآن</button>}
-            </div>}
+              {!timeUp && canFinishEarly && !finishCodeOpen && <button className="outline-button early-finish-button" data-testid="button-finish-early" onClick={onOpenEarlyFinish}><KeyRound size={16} /> إنهاء المهمة الآن</button>}
+            </div>
             {!timeUp ? finishCodeOpen ? (
               <form className="finish-code-box early-finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
                 <strong>إنهاء المهمة قبل انتهاء الوقت</strong>
@@ -2539,7 +2563,7 @@ function ParentView({
       </section>
       <div className="parent-grid">
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">نبض الأبطال</h2><p className="panel-subtitle">هذا الأسبوع حتى الآن</p></div><Trophy color="hsl(var(--accent))" /></div><div className="child-progress">
-          {dynamicProfiles.length === 0 ? <p className="subtle">لا توجد ملفات أطفال.</p> : dynamicProfiles.map((child) => <div className="child-progress-row" key={child.id}>{child.photo ? <img className="mini-avatar profile-photo" src={child.photo} alt={`صورة ${child.name}`} /> : <span className="mini-avatar">{child.initials}</span>}<div className="child-progress-copy"><strong>{child.name}</strong><span>{saved.completed[child.id] ?? 0} مهام مكتملة • {(saved.points[child.id] ?? 0).toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, ((saved.points[child.id] ?? 0) / mapTotalPoints) * 100)}%` }} /></div></div></div>)}
+          {dynamicProfiles.length === 0 ? <p className="subtle">لا توجد ملفات أطفال.</p> : dynamicProfiles.map((child) => <div className="child-progress-row" key={child.id}><span className="mini-avatar" aria-label={`رمز ${child.name}`}>{avatarSymbol(saved.profileAvatars[child.id], child.initials)}</span><div className="child-progress-copy"><strong>{child.name}</strong><span>{saved.completed[child.id] ?? 0} مهام مكتملة • {(saved.points[child.id] ?? 0).toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, ((saved.points[child.id] ?? 0) / mapTotalPoints) * 100)}%` }} /></div></div></div>)}
         </div><button className="outline-button" data-testid="button-switch-from-parent" onClick={onChooseProfile} style={{ width: "100%", marginTop: 24 }}><Users size={15} /> تبديل ملف البطل</button></div>
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">سجل اليوم</h2><p className="panel-subtitle">محطات صغيرة تصنع عادة كبيرة.</p></div><ChartNoAxesColumnIncreasing color="hsl(var(--primary))" /></div><div className="timeline">
           <div className="timeline-item"><span className="timeline-icon"><Check size={14} /></span><div className="timeline-copy"><strong>تم تجهيز الرحلة</strong><p>الحقيبة جاهزة والأدوات في مكانها.</p></div></div>

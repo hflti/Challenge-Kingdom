@@ -1,6 +1,14 @@
 import contract from "../../public/child-content-contract.json";
 
 const rules = contract.rules;
+const legacyDefaultReadingStoryIds = [
+  "fast-rabbit",
+  "moon-trip",
+  "tree-friend",
+  "knowledge-treasure",
+  "busy-bee",
+  "golden-key",
+] as const;
 
 export type LetterGameContent = {
   id: string;
@@ -109,6 +117,13 @@ function hasUniqueIds(items: Array<{ id: string }>): boolean {
   return new Set(items.map((item) => item.id)).size === items.length;
 }
 
+function hasLegacyDefaultReadingStories(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length !== legacyDefaultReadingStoryIds.length) return false;
+  const ids = value.map((item) => item && typeof item === "object" ? (item as ReadingStoryContent).id : null);
+  return new Set(ids).size === legacyDefaultReadingStoryIds.length
+    && legacyDefaultReadingStoryIds.every((id) => ids.includes(id));
+}
+
 export function validateChildContent(value: unknown): ChildContentValidation {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { valid: false, error: "محتوى الطفل غير صالح." };
@@ -208,13 +223,15 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
       };
     })
     : defaultChildContent.numberQuestions;
-  const readingStories = Array.isArray(candidate.readingStories) && candidate.readingStories.length === 6
+  const readingStories = hasLegacyDefaultReadingStories(candidate.readingStories)
+    ? defaultChildContent.readingStories
+    : Array.isArray(candidate.readingStories) && candidate.readingStories.length === 6
     ? candidate.readingStories.map((item, index) => {
       const fallback = defaultChildContent.readingStories[index];
       return {
         id: text(item && typeof item === "object" ? (item as ReadingStoryContent).id : null, fallback.id, 80),
         title: text(item && typeof item === "object" ? (item as ReadingStoryContent).title : null, fallback.title, 120),
-        text: text(item && typeof item === "object" ? (item as ReadingStoryContent).text : null, fallback.text, 2500),
+        text: text(item && typeof item === "object" ? (item as ReadingStoryContent).text : null, fallback.text, rules.readingStoryTextMaxLength),
       };
     })
     : defaultChildContent.readingStories;
