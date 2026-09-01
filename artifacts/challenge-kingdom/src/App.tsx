@@ -40,6 +40,7 @@ import ayhamPhoto from "@assets/أيهم_1787868667283.jpeg";
 import kinanPhoto from "@assets/كنان_1787868667282.jpeg";
 import { AdminConsole } from "./components/admin-console";
 import { ChildExtras, defaultChildRewards, normalizeChildRewards, type BoxOpening, type ChildRewardsState } from "./components/child-extras";
+import { defaultChildContent, normalizeChildContent, type ChildContentConfig } from "./lib/child-content";
 import { accountsApi, type FamilyMember } from "./lib/account-api";
 
 type ProfileId = string;
@@ -134,6 +135,7 @@ type SavedState = {
   points: Record<ProfileId, number>;
   customMissions: Record<ProfileId, SavedMission[]>;
   childRewards: Record<ProfileId, ChildRewardsState>;
+  childContent: ChildContentConfig;
   extraChallenge: ExtraChallengeSettings;
 };
 
@@ -222,6 +224,7 @@ function readSavedState(): SavedState {
     points: { ayham: 0, kinan: 0 },
     customMissions: { ayham: [], kinan: [] },
     childRewards: { ayham: defaultChildRewards, kinan: defaultChildRewards },
+    childContent: defaultChildContent,
     extraChallenge: defaultExtraChallenge,
   };
   try {
@@ -235,6 +238,7 @@ function readSavedState(): SavedState {
       points: { ...fallback.points, ...(parsed.points ?? {}) },
       customMissions: { ...fallback.customMissions, ...(parsed.customMissions ?? {}) },
       childRewards: Object.fromEntries(Object.entries({ ...fallback.childRewards, ...(parsed.childRewards ?? {}) }).map(([id, value]) => [id, normalizeChildRewards(value)])),
+      childContent: normalizeChildContent(parsed.childContent),
       extraChallenge: {
         title: typeof parsed.extraChallenge?.title === "string" && parsed.extraChallenge.title.trim() ? parsed.extraChallenge.title.trim() : fallback.extraChallenge.title,
         duration: typeof parsed.extraChallenge?.duration === "number" ? parsed.extraChallenge.duration : fallback.extraChallenge.duration,
@@ -275,6 +279,7 @@ function toSyncedKingdomState(state: SavedState): SyncedKingdomState {
     points: state.points,
     customMissions: state.customMissions,
     childRewards: state.childRewards,
+    childContent: state.childContent,
     extraChallenge: state.extraChallenge,
   };
 }
@@ -293,6 +298,7 @@ function normalizeSyncedKingdomState(value: unknown): SyncedKingdomState | null 
     points: Object.fromEntries(Object.entries(candidate.points).map(([id, value]) => [id, typeof value === "number" ? value : 0])),
     customMissions: Object.fromEntries(Object.entries(candidate.customMissions).map(([id, value]) => [id, Array.isArray(value) ? value as SavedMission[] : []])),
     childRewards: Object.fromEntries(Object.entries(candidate.childRewards ?? {}).map(([id, value]) => [id, normalizeChildRewards(value)])),
+    childContent: normalizeChildContent(candidate.childContent),
     extraChallenge: {
       title: typeof candidate.extraChallenge?.title === "string" && candidate.extraChallenge.title.trim() ? candidate.extraChallenge.title.trim() : defaultExtraChallenge.title,
       duration: typeof candidate.extraChallenge?.duration === "number" ? candidate.extraChallenge.duration : defaultExtraChallenge.duration,
@@ -1821,7 +1827,7 @@ function App() {
             {tab === "parent" && screen === "home" ? (
               <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => requestProfileAccess("switch")} />
             ) : screen === "home" ? (
-               <HomeView profile={activeProfile} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onParent={() => requestProfileAccess("parent")} />
+               <HomeView profile={activeProfile} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
@@ -1992,6 +1998,7 @@ function HomeView({
   completed,
   points,
   childRewards,
+  childContent,
   activeMission,
   missions: availableMissions,
   lockedMission,
@@ -2020,6 +2027,7 @@ function HomeView({
   completed: number;
   points: number;
   childRewards: ChildRewardsState;
+  childContent: ChildContentConfig;
   activeMission: Mission | null;
   missions: Mission[];
   lockedMission: Mission | null;
@@ -2191,7 +2199,7 @@ function HomeView({
             </div>}
         </div>
       </section>
-      <ChildExtras points={points} rewards={childRewards} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} />
+      <ChildExtras content={childContent} points={points} rewards={childRewards} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} />
     </>
   );
 }

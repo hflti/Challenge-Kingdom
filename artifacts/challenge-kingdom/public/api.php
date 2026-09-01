@@ -254,6 +254,45 @@ function validCode(mixed $value): string
     return $code;
 }
 
+function validChildContent(mixed $value): array
+{
+    if (!is_array($value)) respond(400, ['error' => 'Child content must be an object.']);
+    $text = function (mixed $item, int $max): bool {
+        if (!is_string($item)) return false;
+        $length = function_exists('mb_strlen') ? mb_strlen(trim($item), 'UTF-8') : strlen(trim($item));
+        return $length > 0 && $length <= $max;
+    };
+    $letterGames = $value['letterGames'] ?? null;
+    $numberQuestions = $value['numberQuestions'] ?? null;
+    $readingStories = $value['readingStories'] ?? null;
+    $storeItems = $value['storeItems'] ?? null;
+    $majorRewards = $value['majorBoxRewards'] ?? null;
+    $displayRewards = $value['displayBoxRewards'] ?? null;
+    if (!is_array($letterGames) || count($letterGames) !== 6) respond(400, ['error' => 'Exactly six letter games are required.']);
+    foreach ($letterGames as $item) {
+        if (!is_array($item) || !$text($item['id'] ?? null, 80) || !$text($item['title'] ?? null, 120) || !$text($item['description'] ?? null, 240) || !$text($item['question'] ?? null, 160)
+            || !is_array($item['options'] ?? null) || count($item['options']) < 2 || count($item['options']) > 6
+            || !$text($item['answer'] ?? null, 120) || !in_array($item['answer'], $item['options'], true)) respond(400, ['error' => 'A letter game is invalid.']);
+        foreach ($item['options'] as $option) if (!$text($option, 120)) respond(400, ['error' => 'A letter-game option is invalid.']);
+    }
+    if (!is_array($numberQuestions) || count($numberQuestions) !== 5) respond(400, ['error' => 'Exactly five number questions are required.']);
+    foreach ($numberQuestions as $item) if (!is_array($item) || !$text($item['id'] ?? null, 80) || !$text($item['prompt'] ?? null, 80) || !is_int($item['answer'] ?? null) || $item['answer'] < -10000 || $item['answer'] > 10000) respond(400, ['error' => 'A number question is invalid.']);
+    if (!is_array($readingStories) || count($readingStories) !== 6) respond(400, ['error' => 'Exactly six stories are required.']);
+    foreach ($readingStories as $item) if (!is_array($item) || !$text($item['id'] ?? null, 80) || !$text($item['title'] ?? null, 120) || !$text($item['text'] ?? null, 2500)) respond(400, ['error' => 'A reading story is invalid.']);
+    if (!is_array($storeItems) || count($storeItems) !== 12) respond(400, ['error' => 'Exactly twelve store rewards are required.']);
+    $ids = [];
+    foreach ($storeItems as $item) {
+        if (!is_array($item) || !$text($item['id'] ?? null, 80) || !$text($item['title'] ?? null, 160) || !is_int($item['cost'] ?? null) || $item['cost'] < 5 || $item['cost'] > 25 || !in_array($item['kind'] ?? null, ['screen', 'treat', 'money', 'game'], true)) respond(400, ['error' => 'A store reward is invalid.']);
+        $ids[] = $item['id'];
+    }
+    if (count(array_unique($ids)) !== count($ids)) respond(400, ['error' => 'Store reward identifiers must be unique.']);
+    foreach ([[$majorRewards, 3], [$displayRewards, 2]] as [$rewards, $count]) {
+        if (!is_array($rewards) || count($rewards) !== $count) respond(400, ['error' => 'Box reward values are invalid.']);
+        foreach ($rewards as $reward) if (!is_int($reward) || $reward < 1 || $reward > 10000) respond(400, ['error' => 'Box reward values are invalid.']);
+    }
+    return $value;
+}
+
 function codeHash(string $code, array $config): string { return hash_hmac('sha256', $code, $config['app_secret']); }
 function opaqueId(): string { return bin2hex(random_bytes(16)); }
 
@@ -386,11 +425,12 @@ try {
     $pdo = connectDatabase($config);
     $action = trim((string)($_GET['action'] ?? ''));
     if ($action !== '') {
-        $adminActions = ['admin-families', 'admin-members', 'admin-create-family', 'admin-create-member', 'admin-delete-member', 'admin-delete-family', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-family-name', 'admin-change-code'];
+        $adminActions = ['admin-families', 'admin-members', 'admin-content', 'admin-create-family', 'admin-create-member', 'admin-delete-member', 'admin-delete-family', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-family-name', 'admin-change-code'];
         if (!in_array($action, ['admin-reveal', 'admin-login', 'family-members', 'verify-member', 'bootstrap-family', ...$adminActions], true)) respond(404, ['error' => 'Unknown action.']);
         if (in_array($action, ['admin-reveal', 'admin-login', 'verify-member', 'bootstrap-family'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
         if (in_array($action, ['admin-families', 'admin-members', 'family-members'], true) && $method !== 'GET') respond(405, ['error' => 'Method not allowed.']);
         if (in_array($action, ['admin-create-family', 'admin-create-member', 'admin-delete-member', 'admin-delete-family', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-family-name', 'admin-change-code'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
+        if ($action === 'admin-content' && !in_array($method, ['GET', 'POST'], true)) respond(405, ['error' => 'Method not allowed.']);
         if (in_array($action, $adminActions, true) && $action !== 'admin-login') requireAdmin($pdo, $config);
 
         if ($action === 'admin-reveal') {
@@ -435,6 +475,14 @@ try {
             $members=array_map(fn($r)=>['id'=>$r['id'],'role'=>$r['role'],'name'=>$r['name'],'grade'=>$r['grade'],'title'=>$r['title'],'quote'=>$r['quote_text'],'color'=>$r['color']],$q->fetchAll());
             respond(200,['family'=>['id'=>$family['id'],'name'=>$family['name']],'members'=>$members]);
         }
+        if ($action === 'admin-content' && $method === 'GET') {
+            $id = validText($_GET['familyId'] ?? null, 64, true);
+            $q = $pdo->prepare('SELECT family_key FROM families WHERE id=:id'); $q->execute(['id'=>$id]); $family = $q->fetch();
+            if (!is_array($family)) respond(404, ['error'=>'Family not found.']);
+            $record = fetchRecord($pdo, $family['family_key']);
+            $state = $record ? decodeStoredJson($record['state_json']) : [];
+            respond(200, ['content'=>$state['childContent'] ?? null]);
+        }
         if ($action === 'family-members' || $action === 'verify-member') {
             $key = codeHash(familyCodeFromRequest(), $config);
             $q=$pdo->prepare('SELECT id,name FROM families WHERE family_key=:key'); $q->execute(['key'=>$key]); $family=$q->fetch();
@@ -456,6 +504,27 @@ try {
             respond(200, ['family' => ['id' => $family['id'], 'name' => $family['name']]]);
         }
         $data = readJsonBody();
+        if ($action === 'admin-content') {
+            expectPayload($data, ['familyId', 'content']);
+            $content = validChildContent($data['content']);
+            $pdo->beginTransaction();
+            $q = $pdo->prepare('SELECT family_key FROM families WHERE id=:id FOR UPDATE'); $q->execute(['id'=>$data['familyId']]); $family = $q->fetch();
+            if (!is_array($family)) { $pdo->rollBack(); respond(404, ['error'=>'Family not found.']); }
+            $record = fetchRecord($pdo, $family['family_key'], true);
+            if ($record) {
+                $state = decodeStoredJson($record['state_json']);
+                $state['childContent'] = $content;
+                updateRecord($pdo, $family['family_key'], $state, decodeStoredJson($record['active_challenges_json']), (int)$record['version']);
+            } else {
+                insertRecord($pdo, $family['family_key'], [
+                    'completed'=>[], 'points'=>[], 'customMissions'=>[], 'childRewards'=>[],
+                    'extraChallenge'=>['title'=>'التحدي الإضافي','duration'=>600,'rewardPoints'=>10],
+                    'childContent'=>$content,
+                ], []);
+            }
+            $pdo->commit();
+            respond(200, ['content'=>$content]);
+        }
         if ($action === 'admin-change-family-name') {
             expectPayload($data, ['familyId', 'name']);
             $name = validText($data['name'], 80, true);

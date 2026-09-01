@@ -1,0 +1,158 @@
+export type LetterGameContent = {
+  id: string;
+  title: string;
+  description: string;
+  question: string;
+  options: string[];
+  answer: string;
+};
+
+export type NumberQuestionContent = {
+  id: string;
+  prompt: string;
+  answer: number;
+};
+
+export type ReadingStoryContent = {
+  id: string;
+  title: string;
+  text: string;
+};
+
+export type RewardKind = "screen" | "treat" | "money" | "game";
+
+export type StoreItemContent = {
+  id: string;
+  title: string;
+  cost: number;
+  kind: RewardKind;
+};
+
+export type ChildContentConfig = {
+  letterGames: LetterGameContent[];
+  numberQuestions: NumberQuestionContent[];
+  readingStories: ReadingStoryContent[];
+  storeItems: StoreItemContent[];
+  majorBoxRewards: number[];
+  displayBoxRewards: number[];
+};
+
+export const defaultChildContent: ChildContentConfig = {
+  letterGames: [
+    { id: "match-letter", title: "طابق الحرف", description: "اختر الحرف الذي يبدأ به اسم الصورة.", question: "بَاب", options: ["ب", "ت", "م"], answer: "ب" },
+    { id: "order-letters", title: "رتّب الحروف", description: "ما الكلمة الصحيحة؟", question: "ب ـ ا ـ ت ـ ك", options: ["كِتَاب", "بَاتِك", "تَابِك"], answer: "كِتَاب" },
+    { id: "missing-letter", title: "الحرف الناقص", description: "أكمل الكلمة بالحرف المناسب.", question: "قَلَـ", options: ["م", "ب", "ر"], answer: "م" },
+    { id: "letter-sound", title: "صوت الحرف", description: "أي كلمة تبدأ بصوت (س)؟", question: "س", options: ["سَمَك", "قَمَر", "بَيْت"], answer: "سَمَك" },
+    { id: "english-match", title: "English match", description: "Choose the word that starts with B.", question: "B", options: ["Book", "Moon", "Fish"], answer: "Book" },
+    { id: "letter-order", title: "Letter order", description: "Which letter comes after C?", question: "A ـ B ـ C ـ ?", options: ["D", "E", "F"], answer: "D" },
+  ],
+  numberQuestions: [
+    { id: "numbers-1", prompt: "6 + 3", answer: 9 },
+    { id: "numbers-2", prompt: "19 − 4", answer: 15 },
+    { id: "numbers-3", prompt: "5 × 4", answer: 20 },
+    { id: "numbers-4", prompt: "32 ÷ 4", answer: 8 },
+    { id: "numbers-5", prompt: "12 + 8", answer: 20 },
+  ],
+  readingStories: [
+    { id: "fast-rabbit", title: "الأرنبُ السَّريعُ", text: "كَانَ أَرْنَبٌ صَغِيرٌ يَجْرِي فِي الْحَدِيقَةِ. رَأَى زَهْرَةً جَمِيلَةً، فَتَوَقَّفَ لِيَشُمَّ عِطْرَهَا. ثُمَّ عَادَ إِلَى أَصْدِقَائِهِ فَرِحًا." },
+    { id: "moon-trip", title: "رِحْلَةُ الْقَمَرِ", text: "نَظَرَ سَالِمٌ إِلَى السَّمَاءِ لَيْلًا. كَانَ الْقَمَرُ مُضِيئًا وَالنُّجُومُ حَوْلَهُ لَامِعَةً. تَمَنَّى أَنْ يَزُورَ مَرْصَدًا لِيَرَى الْكَوَاكِبَ عَنْ قُرْبٍ." },
+    { id: "tree-friend", title: "صَدِيقُ الشَّجَرَةِ", text: "زَرَعَتْ لَيْلَى شَجَرَةً صَغِيرَةً أَمَامَ الْبَيْتِ. سَقَتْهَا كُلَّ صَبَاحٍ، وَحَمَتْهَا مِنَ الرِّيحِ. بَعْدَ أَيَّامٍ ظَهَرَتْ أَوْرَاقٌ خَضْرَاءُ." },
+    { id: "knowledge-treasure", title: "كَنْزُ الْمَعْرِفَةِ", text: "فَتَحَ عُمَرُ كِتَابَهُ، فَوَجَدَ فِيهِ خَرِيطَةً قَدِيمَةً. قَادَتْهُ الْخَرِيطَةُ إِلَى أَسْئِلَةٍ مُثِيرَةٍ. كُلَّمَا قَرَأَ سَطْرًا، اكْتَشَفَ كَنْزًا جَدِيدًا." },
+    { id: "busy-bee", title: "النَّحْلَةُ الْمُجْتَهِدَةُ", text: "خَرَجَتْ نَحْلَةٌ نَشِيطَةٌ تَبْحَثُ عَنْ رَحِيقٍ. زَارَتْ أَزْهَارًا كَثِيرَةً وَعَادَتْ إِلَى الْخَلِيَّةِ. تَعَلَّمَتْ أَنَّ الْعَمَلَ مَعَ الْفَرِيقِ يُقَرِّبُ النَّجَاحَ." },
+    { id: "golden-key", title: "مِفْتَاحُ الْبَابِ", text: "وَجَدَ فَهْدٌ مِفْتَاحًا ذَهَبِيًّا فِي صُنْدُوقٍ صَغِيرٍ. سَأَلَ أُمَّهُ قَبْلَ أَنْ يَفْتَحَ الْبَابَ الْقَدِيمَ. كَانَ خَلْفَ الْبَابِ مَكْتَبَةٌ مُلْهَمَةٌ." },
+  ],
+  storeItems: [
+    { id: "tablet-15", title: "استخدام الآيباد 15 دقيقة", cost: 15, kind: "screen" },
+    { id: "chocolate", title: "قطعة شوكولاتة", cost: 10, kind: "treat" },
+    { id: "pocket-money", title: "زيادة 2 ريال في المصروف", cost: 10, kind: "money" },
+    { id: "game-1", title: "لعبة ممتعة: سباق النجوم", cost: 10, kind: "game" },
+    { id: "game-2", title: "لعبة ممتعة: صائد الحروف", cost: 10, kind: "game" },
+    { id: "game-3", title: "لعبة ممتعة: ذاكرة الأبطال", cost: 10, kind: "game" },
+    { id: "game-4", title: "لعبة ممتعة: تحدي الألوان", cost: 10, kind: "game" },
+    { id: "game-5", title: "لعبة ممتعة: متاهة الكنز", cost: 10, kind: "game" },
+    { id: "game-6", title: "لعبة ممتعة: قفزة القمر", cost: 10, kind: "game" },
+    { id: "meal-choice", title: "اختيار وجبة الغد", cost: 20, kind: "treat" },
+    { id: "late-night", title: "نصف ساعة إضافية قبل النوم", cost: 25, kind: "screen" },
+    { id: "small-toy", title: "لعبة صغيرة أو ملصقات", cost: 25, kind: "treat" },
+  ],
+  majorBoxRewards: [50, 75, 100],
+  displayBoxRewards: [10, 15],
+};
+
+function text(value: unknown, fallback: string, maxLength: number): string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= maxLength ? value.trim() : fallback;
+}
+
+function stringList(value: unknown, fallback: string[]): string[] {
+  return Array.isArray(value) && value.length >= 2 && value.length <= 6
+    ? value.map((item, index) => text(item, fallback[index] ?? `خيار ${index + 1}`, 120))
+    : fallback;
+}
+
+export function normalizeChildContent(value: unknown): ChildContentConfig {
+  if (!value || typeof value !== "object") return defaultChildContent;
+  const candidate = value as Partial<ChildContentConfig>;
+  const letterGames = Array.isArray(candidate.letterGames) && candidate.letterGames.length === 6
+    ? candidate.letterGames.map((item, index) => {
+      const fallback = defaultChildContent.letterGames[index];
+      const options = stringList(item && typeof item === "object" ? (item as LetterGameContent).options : null, fallback.options);
+      return {
+        id: text(item && typeof item === "object" ? (item as LetterGameContent).id : null, fallback.id, 80),
+        title: text(item && typeof item === "object" ? (item as LetterGameContent).title : null, fallback.title, 120),
+        description: text(item && typeof item === "object" ? (item as LetterGameContent).description : null, fallback.description, 240),
+        question: text(item && typeof item === "object" ? (item as LetterGameContent).question : null, fallback.question, 160),
+        options,
+        answer: options.includes(item && typeof item === "object" ? (item as LetterGameContent).answer : "") ? (item as LetterGameContent).answer : fallback.answer,
+      };
+    })
+    : defaultChildContent.letterGames;
+  const numberQuestions = Array.isArray(candidate.numberQuestions) && candidate.numberQuestions.length === 5
+    ? candidate.numberQuestions.map((item, index) => {
+      const fallback = defaultChildContent.numberQuestions[index];
+      return {
+        id: text(item && typeof item === "object" ? (item as NumberQuestionContent).id : null, fallback.id, 80),
+        prompt: text(item && typeof item === "object" ? (item as NumberQuestionContent).prompt : null, fallback.prompt, 80),
+        answer: typeof (item && typeof item === "object" ? (item as NumberQuestionContent).answer : null) === "number"
+          ? Math.round((item as NumberQuestionContent).answer)
+          : fallback.answer,
+      };
+    })
+    : defaultChildContent.numberQuestions;
+  const readingStories = Array.isArray(candidate.readingStories) && candidate.readingStories.length === 6
+    ? candidate.readingStories.map((item, index) => {
+      const fallback = defaultChildContent.readingStories[index];
+      return {
+        id: text(item && typeof item === "object" ? (item as ReadingStoryContent).id : null, fallback.id, 80),
+        title: text(item && typeof item === "object" ? (item as ReadingStoryContent).title : null, fallback.title, 120),
+        text: text(item && typeof item === "object" ? (item as ReadingStoryContent).text : null, fallback.text, 2500),
+      };
+    })
+    : defaultChildContent.readingStories;
+  const storeItems = Array.isArray(candidate.storeItems) && candidate.storeItems.length === 12
+    ? candidate.storeItems.map((item, index) => {
+      const fallback = defaultChildContent.storeItems[index];
+      const kind = item && typeof item === "object" && ["screen", "treat", "money", "game"].includes((item as StoreItemContent).kind)
+        ? (item as StoreItemContent).kind
+        : fallback.kind;
+      return {
+        id: text(item && typeof item === "object" ? (item as StoreItemContent).id : null, fallback.id, 80),
+        title: text(item && typeof item === "object" ? (item as StoreItemContent).title : null, fallback.title, 160),
+        cost: typeof (item && typeof item === "object" ? (item as StoreItemContent).cost : null) === "number"
+          ? Math.min(25, Math.max(5, Math.round((item as StoreItemContent).cost)))
+          : fallback.cost,
+        kind,
+      };
+    })
+    : defaultChildContent.storeItems;
+  const rewards = (list: unknown, fallback: number[]) => Array.isArray(list) && list.length === fallback.length && list.every((item) => typeof item === "number" && Number.isFinite(item))
+    ? list.map((item) => Math.max(1, Math.round(item as number)))
+    : fallback;
+  return {
+    letterGames,
+    numberQuestions,
+    readingStories,
+    storeItems,
+    majorBoxRewards: rewards(candidate.majorBoxRewards, defaultChildContent.majorBoxRewards),
+    displayBoxRewards: rewards(candidate.displayBoxRewards, defaultChildContent.displayBoxRewards),
+  };
+}

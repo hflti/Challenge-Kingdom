@@ -50,6 +50,46 @@ function optionalText(value: unknown, maxLength: number): string | null | undefi
   return typeof value === "string" && value.length <= maxLength ? value.trim() : undefined;
 }
 
+function validChildContent(value: unknown): value is JsonMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const content = value as JsonMap;
+  const text = (item: unknown, max: number) => typeof item === "string" && item.trim().length > 0 && item.length <= max;
+  const letterGames = content.letterGames;
+  const numberQuestions = content.numberQuestions;
+  const readingStories = content.readingStories;
+  const storeItems = content.storeItems;
+  const majorRewards = content.majorBoxRewards;
+  const displayRewards = content.displayBoxRewards;
+  if (!Array.isArray(letterGames) || letterGames.length !== 6 || !letterGames.every((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+    const item = raw as JsonMap;
+    return text(item.id, 80) && text(item.title, 120) && text(item.description, 240) && text(item.question, 160)
+      && Array.isArray(item.options) && item.options.length >= 2 && item.options.length <= 6
+      && item.options.every((option) => text(option, 120)) && text(item.answer, 120) && item.options.includes(item.answer);
+  })) return false;
+  if (!Array.isArray(numberQuestions) || numberQuestions.length !== 5 || !numberQuestions.every((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+    const item = raw as JsonMap;
+    return text(item.id, 80) && text(item.prompt, 80) && Number.isInteger(item.answer) && Number(item.answer) >= -10000 && Number(item.answer) <= 10000;
+  })) return false;
+  if (!Array.isArray(readingStories) || readingStories.length !== 6 || !readingStories.every((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+    const item = raw as JsonMap;
+    return text(item.id, 80) && text(item.title, 120) && text(item.text, 2500);
+  })) return false;
+  if (!Array.isArray(storeItems) || storeItems.length !== 12 || !storeItems.every((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+    const item = raw as JsonMap;
+    return text(item.id, 80) && text(item.title, 160) && Number.isInteger(item.cost)
+      && Number(item.cost) >= 5 && Number(item.cost) <= 25
+      && ["screen", "treat", "money", "game"].includes(String(item.kind));
+  })) return false;
+  if (new Set(storeItems.map((item) => (item as JsonMap).id)).size !== storeItems.length) return false;
+  const validRewards = (items: unknown, expectedLength: number) =>
+    Array.isArray(items) && items.length === expectedLength && items.every((item) => Number.isInteger(item) && Number(item) > 0 && Number(item) <= 10000);
+  return validRewards(majorRewards, 3) && validRewards(displayRewards, 2);
+}
+
 function clientKey(req: Request): string {
   return req.ip || "unknown";
 }
@@ -178,6 +218,26 @@ router.get("/accounts", async (req, res): Promise<void> => {
     }
     const members = await db.select().from(membersTable).where(eq(membersTable.familyId, family.id));
     res.json({ family: { id: family.id, name: family.name }, members: members.map(memberMetadata) });
+    return;
+  }
+
+  if (action === "admin-content") {
+    if (!(await requireAdmin(req))) {
+      res.status(401).json({ error: "Administrator authorization is required." });
+      return;
+    }
+    const familyId = req.query.familyId;
+    if (!validText(familyId, 128)) {
+      res.status(400).json({ error: "A valid family id is required." });
+      return;
+    }
+    const [family] = await db.select().from(familiesTable).where(eq(familiesTable.id, familyId));
+    if (!family) {
+      res.status(404).json({ error: "Family not found." });
+      return;
+    }
+    const [record] = await db.select().from(kingdomStatesTable).where(eq(kingdomStatesTable.familyKey, family.familyKey));
+    res.json({ content: record ? ((record.state as JsonMap).childContent ?? null) : null });
     return;
   }
 
@@ -337,6 +397,47 @@ router.post("/accounts", async (req, res): Promise<void> => {
       return;
     }
     res.status(201).json({ family: { id: created.id, name: created.name } });
+    return;
+  }
+
+  if (action === "admin-content") {
+    if (!validText(body.familyId, 128) || !validChildContent(body.content)) {
+      res.status(400).json({ error: "The child content settings are invalid." });
+      return;
+    }
+    const familyId = body.familyId;
+    const content = body.content;
+    const saved = await db.transaction(async (tx) => {
+      const [family] = await tx.select().from(familiesTable).where(eq(familiesTable.id, familyId));
+      if (!family) return null;
+      const [record] = await tx.select().from(kingdomStatesTable).where(eq(kingdomStatesTable.familyKey, family.familyKey));
+      if (!record) {
+        await tx.insert(kingdomStatesTable).values({
+          familyKey: family.familyKey,
+          state: {
+            completed: {},
+            points: {},
+            customMissions: {},
+            childRewards: {},
+            extraChallenge: { title: "التحدي الإضافي", duration: 600, rewardPoints: 10 },
+            childContent: content,
+          },
+          activeChallenges: {},
+        });
+      } else {
+        await tx.update(kingdomStatesTable).set({
+          state: { ...(record.state as JsonMap), childContent: content },
+          version: sql`${kingdomStatesTable.version} + 1`,
+          updatedAt: new Date(),
+        }).where(eq(kingdomStatesTable.familyKey, family.familyKey));
+      }
+      return content;
+    });
+    if (!saved) {
+      res.status(404).json({ error: "Family not found." });
+      return;
+    }
+    res.json({ content: saved });
     return;
   }
 

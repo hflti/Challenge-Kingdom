@@ -1,3 +1,5 @@
+import type { ChildContentConfig } from "./child-content";
+
 export type MemberRole = "owner" | "child";
 
 export type FamilySummary = {
@@ -78,6 +80,10 @@ export const accountsApi = {
     request<{ family: Family }>("admin-create-family", { method: "POST", token, body: { name, code } }),
   adminMembers: (token: string, familyId: string) =>
     request<{ family: Family; members: FamilyMember[] }>("admin-members", { token, query: { familyId } }),
+  adminContent: (token: string, familyId: string) =>
+    request<{ content: ChildContentConfig | null }>("admin-content", { token, query: { familyId } }),
+  saveAdminContent: (token: string, familyId: string, content: ChildContentConfig) =>
+    request<{ content: ChildContentConfig }>("admin-content", { method: "POST", token, body: { familyId, content } }),
   createMember: (token: string, input: {
     familyId: string; role: MemberRole; name: string; code: string; grade?: string; title?: string; quote?: string; color?: string;
   }) => request<unknown>("admin-create-member", { method: "POST", token, body: input }),

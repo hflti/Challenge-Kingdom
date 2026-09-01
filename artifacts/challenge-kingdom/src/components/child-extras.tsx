@@ -17,6 +17,7 @@ import {
   Star,
   Volume2,
 } from "lucide-react";
+import { defaultChildContent, type ChildContentConfig, type StoreItemContent } from "../lib/child-content";
 
 export type BoxOpening = {
   boxIndex: number;
@@ -58,6 +59,7 @@ export function normalizeChildRewards(value: unknown): ChildRewardsState {
 }
 
 type ChildExtrasProps = {
+  content?: ChildContentConfig;
   points: number;
   rewards: ChildRewardsState;
   onSpend: (cost: number, itemId: string) => boolean;
@@ -65,56 +67,13 @@ type ChildExtrasProps = {
   onAwardPoints: (amount: number) => void;
 };
 
-type LetterGame = {
-  title: string;
-  description: string;
-  question: string;
-  options: string[];
-  answer: string;
-};
-
-const letterGames: LetterGame[] = [
-  { title: "طابق الحرف", description: "اختر الحرف الذي يبدأ به اسم الصورة.", question: "بَاب", options: ["ب", "ت", "م"], answer: "ب" },
-  { title: "رتّب الحروف", description: "ما الكلمة الصحيحة؟", question: "ب ـ ا ـ ت ـ ك", options: ["كِتَاب", "بَاتِك", "تَابِك"], answer: "كِتَاب" },
-  { title: "الحرف الناقص", description: "أكمل الكلمة بالحرف المناسب.", question: "قَلَـ", options: ["م", "ب", "ر"], answer: "م" },
-  { title: "صوت الحرف", description: "أي كلمة تبدأ بصوت (س)؟", question: "س", options: ["سَمَك", "قَمَر", "بَيْت"], answer: "سَمَك" },
-  { title: "English match", description: "Choose the word that starts with B.", question: "B", options: ["Book", "Moon", "Fish"], answer: "Book" },
-  { title: "Letter order", description: "Which letter comes after C?", question: "A ـ B ـ C ـ ?", options: ["D", "E", "F"], answer: "D" },
-];
-
-const readingStories = [
-  { title: "الأرنبُ السَّريعُ", text: "كَانَ أَرْنَبٌ صَغِيرٌ يَجْرِي فِي الْحَدِيقَةِ. رَأَى زَهْرَةً جَمِيلَةً، فَتَوَقَّفَ لِيَشُمَّ عِطْرَهَا. ثُمَّ عَادَ إِلَى أَصْدِقَائِهِ فَرِحًا." },
-  { title: "رِحْلَةُ الْقَمَرِ", text: "نَظَرَ سَالِمٌ إِلَى السَّمَاءِ لَيْلًا. كَانَ الْقَمَرُ مُضِيئًا وَالنُّجُومُ حَوْلَهُ لَامِعَةً. تَمَنَّى أَنْ يَزُورَ مَرْصَدًا لِيَرَى الْكَوَاكِبَ عَنْ قُرْبٍ." },
-  { title: "صَدِيقُ الشَّجَرَةِ", text: "زَرَعَتْ لَيْلَى شَجَرَةً صَغِيرَةً أَمَامَ الْبَيْتِ. سَقَتْهَا كُلَّ صَبَاحٍ، وَحَمَتْهَا مِنَ الرِّيحِ. بَعْدَ أَيَّامٍ ظَهَرَتْ أَوْرَاقٌ خَضْرَاءُ." },
-  { title: "كَنْزُ الْمَعْرِفَةِ", text: "فَتَحَ عُمَرُ كِتَابَهُ، فَوَجَدَ فِيهِ خَرِيطَةً قَدِيمَةً. قَادَتْهُ الْخَرِيطَةُ إِلَى أَسْئِلَةٍ مُثِيرَةٍ. كُلَّمَا قَرَأَ سَطْرًا، اكْتَشَفَ كَنْزًا جَدِيدًا." },
-  { title: "النَّحْلَةُ الْمُجْتَهِدَةُ", text: "خَرَجَتْ نَحْلَةٌ نَشِيطَةٌ تَبْحَثُ عَنْ رَحِيقٍ. زَارَتْ أَزْهَارًا كَثِيرَةً وَعَادَتْ إِلَى الْخَلِيَّةِ. تَعَلَّمَتْ أَنَّ الْعَمَلَ مَعَ الْفَرِيقِ يُقَرِّبُ النَّجَاحَ." },
-  { title: "مِفْتَاحُ الْبَابِ", text: "وَجَدَ فَهْدٌ مِفْتَاحًا ذَهَبِيًّا فِي صُنْدُوقٍ صَغِيرٍ. سَأَلَ أُمَّهُ قَبْلَ أَنْ يَفْتَحَ الْبَابَ الْقَدِيمَ. كَانَ خَلْفَ الْبَابِ مَكْتَبَةٌ مُلْهَمَةٌ." },
-];
-
-const storeItems = [
-  { id: "tablet-15", title: "استخدام الآيباد 15 دقيقة", cost: 15, icon: Gamepad2 },
-  { id: "chocolate", title: "قطعة شوكولاتة", cost: 10, icon: Gift },
-  { id: "pocket-money", title: "زيادة 2 ريال في المصروف", cost: 10, icon: Star },
-  { id: "game-1", title: "لعبة ممتعة: سباق النجوم", cost: 10, icon: Gamepad2 },
-  { id: "game-2", title: "لعبة ممتعة: صائد الحروف", cost: 10, icon: Languages },
-  { id: "game-3", title: "لعبة ممتعة: ذاكرة الأبطال", cost: 10, icon: Gamepad2 },
-  { id: "game-4", title: "لعبة ممتعة: تحدي الألوان", cost: 10, icon: Sparkles },
-  { id: "game-5", title: "لعبة ممتعة: متاهة الكنز", cost: 10, icon: Gamepad2 },
-  { id: "game-6", title: "لعبة ممتعة: قفزة القمر", cost: 10, icon: Star },
-  { id: "meal-choice", title: "اختيار وجبة الغد", cost: 20, icon: Gift },
-  { id: "late-night", title: "نصف ساعة إضافية قبل النوم", cost: 25, icon: Star },
-  { id: "small-toy", title: "لعبة صغيرة أو ملصقات", cost: 25, icon: Gift },
-];
-
-function numberQuestion(round: number, index: number) {
-  const seed = round * 5 + index;
-  if (seed % 4 === 0) return { prompt: `${seed + 6} + ${index + 3}`, answer: seed + 9 };
-  if (seed % 4 === 1) return { prompt: `${seed + 18} − ${index + 4}`, answer: seed + 14 };
-  if (seed % 4 === 2) return { prompt: `${index + 3} × ${index + 2}`, answer: (index + 3) * (index + 2) };
-  return { prompt: `${(index + 2) * 8} ÷ ${index + 2}`, answer: 8 };
+function rewardIcon(item: StoreItemContent) {
+  if (item.kind === "money") return Star;
+  if (item.kind === "game" || item.kind === "screen") return Gamepad2;
+  return Gift;
 }
 
-export function ChildExtras({ points, rewards, onSpend, onOpenBox, onAwardPoints }: ChildExtrasProps) {
+export function ChildExtras({ content = defaultChildContent, points, rewards, onSpend, onOpenBox, onAwardPoints }: ChildExtrasProps) {
   const [activePanel, setActivePanel] = useState<"letters" | "numbers" | "reading" | "store" | "badges" | null>(null);
   const [letterIndex, setLetterIndex] = useState(0);
   const [letterDone, setLetterDone] = useState<number[]>([]);
@@ -133,9 +92,9 @@ export function ChildExtras({ points, rewards, onSpend, onOpenBox, onAwardPoints
   const lifetimePoints = Math.max(points, rewards.lifetimePoints);
   const badgeCount = Math.floor(lifetimePoints / 120);
   const unlockedBoxes = Math.min(5, Math.floor(badgeCount / 3));
-  const currentLetterGame = letterGames[letterIndex];
-  const currentNumberQuestion = numberQuestion(numberRound, numberIndex);
-  const readingStory = readingStories[readingIndex];
+  const currentLetterGame = content.letterGames[letterIndex] ?? content.letterGames[0];
+  const currentNumberQuestion = content.numberQuestions[numberIndex] ?? content.numberQuestions[0];
+  const readingStory = content.readingStories[readingIndex] ?? content.readingStories[0];
   const pauseRemaining = Math.max(0, Math.ceil((readingPausedUntil - Date.now()) / 1000));
 
   useEffect(() => {
@@ -212,8 +171,8 @@ export function ChildExtras({ points, rewards, onSpend, onOpenBox, onAwardPoints
 
   const openBox = (boxIndex: number) => {
     if (boxIndex >= unlockedBoxes || rewards.openedBoxes.some((item) => item.boxIndex === boxIndex)) return;
-    const selectedMajorIndex = Math.floor(Math.random() * 3);
-    const majorReward = [50, 75, 100][selectedMajorIndex];
+    const selectedMajorIndex = Math.floor(Math.random() * content.majorBoxRewards.length);
+    const majorReward = content.majorBoxRewards[selectedMajorIndex];
     onOpenBox({ boxIndex, majorReward, selectedMajorIndex });
     setBoxNotice(`فتحت الصندوق وفزت بـ ${majorReward} ريال! الصندوق مختار عشوائياً من الجوائز الكبرى.`);
   };
@@ -251,7 +210,7 @@ export function ChildExtras({ points, rewards, onSpend, onOpenBox, onAwardPoints
             {activePanel === "letters" && (
               <div data-testid="panel-letter-games">
                 <div className="extras-modal-heading"><Languages size={25} /><div><div className="eyebrow">درب الحروف • 6 ألعاب</div><h2>اكتشف قوة الكلمات</h2></div></div>
-                <div className="game-picker">{letterGames.map((game, index) => <button key={game.title} className={index === letterIndex ? "selected" : ""} onClick={() => { setLetterIndex(index); setLetterMessage(""); }}><span>{index + 1}</span>{game.title}{letterDone.includes(index) && <Check size={14} />}</button>)}</div>
+                <div className="game-picker">{content.letterGames.map((game, index) => <button key={game.id} className={index === letterIndex ? "selected" : ""} onClick={() => { setLetterIndex(index); setLetterMessage(""); }}><span>{index + 1}</span>{game.title}{letterDone.includes(index) && <Check size={14} />}</button>)}</div>
                 <div className="letter-game-stage"><span className="game-stage-label">اللعبة {letterIndex + 1} من 6</span><h3>{currentLetterGame.question}</h3><p>{currentLetterGame.description}</p><div className="answer-option-grid">{currentLetterGame.options.map((option) => <button key={option} onClick={() => chooseLetter(option)}>{option}</button>)}</div>{letterMessage && <p className="game-message">{letterMessage}</p>}</div>
               </div>
             )}
@@ -264,13 +223,13 @@ export function ChildExtras({ points, rewards, onSpend, onOpenBox, onAwardPoints
             {activePanel === "reading" && (
               <div data-testid="panel-reading-speed">
                 <div className="extras-modal-heading"><BookOpen size={25} /><div><div className="eyebrow">القراءة السريعة • 6 نوافذ</div><h2>اقرأ بهدوء وسرعة</h2></div></div>
-                {!readingOpen ? <div className="story-grid">{readingStories.map((story, index) => <button key={story.title} onClick={() => openReading(index)}><BookOpen size={18} /><strong>{story.title}</strong><span>قصة مشكولة بالكامل</span></button>)}</div> : <div className="reader-stage"><div className="reader-toolbar"><button className="outline-button" onClick={() => setReadingOpen(false)}>كل القصص</button><span>نطق الكلمات: {spokenWords} / 20</span><button className="primary-button gold" onClick={() => setReadingPausedUntil(Date.now() + 10000)} disabled={pauseRemaining > 0}>{pauseRemaining > 0 ? `متوقف ${pauseRemaining} ث` : <><Pause size={15} /> إيقاف 10 ثوانٍ</>}</button></div><h3>{readingStory.title}</h3><div className="reader-text" ref={readingRef}>{renderReaderText.map((word, index) => <button key={`${word}-${index}`} onClick={() => speakWord(word)} disabled={spokenWords >= 20}>{word}</button>)}</div><p className="reader-note"><Volume2 size={14} /> اضغط على أي كلمة لسماع نطقها الصحيح. بقي لك {20 - spokenWords} كلمة.</p></div>}
+                {!readingOpen ? <div className="story-grid">{content.readingStories.map((story, index) => <button key={story.id} onClick={() => openReading(index)}><BookOpen size={18} /><strong>{story.title}</strong><span>قصة مشكولة بالكامل</span></button>)}</div> : <div className="reader-stage"><div className="reader-toolbar"><button className="outline-button" onClick={() => setReadingOpen(false)}>كل القصص</button><span>نطق الكلمات: {spokenWords} / 20</span><button className="primary-button gold" onClick={() => setReadingPausedUntil(Date.now() + 10000)} disabled={pauseRemaining > 0}>{pauseRemaining > 0 ? `متوقف ${pauseRemaining} ث` : <><Pause size={15} /> إيقاف 10 ثوانٍ</>}</button></div><h3>{readingStory.title}</h3><div className="reader-text" ref={readingRef}>{renderReaderText.map((word, index) => <button key={`${word}-${index}`} onClick={() => speakWord(word)} disabled={spokenWords >= 20}>{word}</button>)}</div><p className="reader-note"><Volume2 size={14} /> اضغط على أي كلمة لسماع نطقها الصحيح. بقي لك {20 - spokenWords} كلمة.</p></div>}
               </div>
             )}
             {activePanel === "store" && (
               <div data-testid="panel-reward-store">
                 <div className="extras-modal-heading"><ShoppingBag size={25} /><div><div className="eyebrow">متجر المكافآت</div><h2>ماذا تشتري بنقاطك؟</h2></div><strong className="store-balance">{points} نقطة</strong></div>
-                <div className="store-items-grid">{storeItems.map((item) => { const Icon = item.icon; const purchased = rewards.purchasedIds.includes(item.id); return <div className={`store-item ${purchased ? "purchased" : ""}`} key={item.id}><span className="store-item-icon"><Icon size={19} /></span><strong>{item.title}</strong><span className="store-cost">{item.cost} نقطة</span><button className={purchased ? "outline-button" : "primary-button gold"} disabled={purchased || points < item.cost} onClick={() => purchase(item.id, item.cost)}>{purchased ? <><Check size={14} /> تم الطلب</> : "استبدال"}</button></div>; })}</div>{boxNotice && <p className="game-message">{boxNotice}</p>}
+                <div className="store-items-grid">{content.storeItems.map((item) => { const Icon = rewardIcon(item); const purchased = rewards.purchasedIds.includes(item.id); return <div className={`store-item ${purchased ? "purchased" : ""}`} key={item.id}><span className="store-item-icon"><Icon size={19} /></span><strong>{item.title}</strong><span className="store-cost">{item.cost} نقطة</span><button className={purchased ? "outline-button" : "primary-button gold"} disabled={purchased || points < item.cost} onClick={() => purchase(item.id, item.cost)}>{purchased ? <><Check size={14} /> تم الطلب</> : "استبدال"}</button></div>; })}</div>{boxNotice && <p className="game-message">{boxNotice}</p>}
               </div>
             )}
             {activePanel === "badges" && (
@@ -278,7 +237,7 @@ export function ChildExtras({ points, rewards, onSpend, onOpenBox, onAwardPoints
                 <div className="extras-modal-heading"><Medal size={25} /><div><div className="eyebrow">رحلة الأوسمة</div><h2>كل 120 نقطة وسام جديد</h2></div></div>
                 <div className="badge-progress"><div className="badge-count"><Medal size={31} /><strong>{badgeCount}</strong><span>أوسمة</span></div><div><strong>{lifetimePoints} / {Math.max(120, (badgeCount + 1) * 120)} نقطة مكتسبة</strong><p>عند جمع 3 أوسمة يفتح صندوق هدية عشوائي من أصل 5. شراء المكافآت لا يسحب الأوسمة السابقة.</p><div className="badge-track"><i style={{ width: `${Math.min(100, (lifetimePoints % 120) / 1.2)}%` }} /></div></div></div>
                 <div className="mystery-boxes">{Array.from({ length: 5 }, (_, index) => { const opening = rewards.openedBoxes.find((item) => item.boxIndex === index); const available = index < unlockedBoxes; return <button key={index} className={`mystery-box ${available ? "available" : ""} ${opening ? "opened" : ""}`} disabled={!available || Boolean(opening)} onClick={() => openBox(index)}>{opening ? <><Gift size={25} /><strong>{opening.majorReward} ريال</strong><span>جائزتك الكبرى</span></> : <><Gift size={25} /><strong>{available ? "افتحني" : <LockKeyhole size={18} />}</strong><span>الصندوق {index + 1}</span></>}</button>; })}</div>
-                {rewards.openedBoxes.length > 0 && <div className="box-reveal-note"><CircleHelp size={16} /><span>الجوائز الكبرى المتاحة عشوائياً: 50 أو 75 أو 100 ريال. الصناديق الأخرى تعرض 10 و15 ريالاً للتحفيز فقط، ولا تدخل في السحب.</span></div>}
+                {rewards.openedBoxes.length > 0 && <div className="box-reveal-note"><CircleHelp size={16} /><span>الجوائز الكبرى المتاحة عشوائياً: {content.majorBoxRewards.join(" أو ")} ريال. الصناديق الأخرى تعرض {content.displayBoxRewards.join(" و")} ريالاً للتحفيز فقط، ولا تدخل في السحب.</span></div>}
               </div>
             )}
           </div>

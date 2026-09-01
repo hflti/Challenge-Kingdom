@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { accountsApi, type FamilyMember, type FamilySummary, type MemberRole } from "../lib/account-api";
+import { defaultChildContent, normalizeChildContent, type ChildContentConfig, type RewardKind } from "../lib/child-content";
 
 type AdminConsoleProps = { onClose: () => void };
 
@@ -44,6 +45,8 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
   const [showFamilySettings, setShowFamilySettings] = useState(false);
   const [showAdminSecurity, setShowAdminSecurity] = useState(false);
   const [showMemberForm, setShowMemberForm] = useState(false);
+  const [showContentSettings, setShowContentSettings] = useState(false);
+  const [childContent, setChildContent] = useState<ChildContentConfig>(defaultChildContent);
 
   const owner = members.find((member) => member.role === "owner");
   const children = members.filter((member) => member.role === "child");
@@ -82,11 +85,15 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
     setLoading(true);
     setError("");
     try {
-      const result = await accountsApi.adminMembers(sessionToken, family.id);
+      const [result, contentResult] = await Promise.all([
+        accountsApi.adminMembers(sessionToken, family.id),
+        accountsApi.adminContent(sessionToken, family.id),
+      ]);
       const currentFamily = { ...family, name: result.family.name };
       setSelectedFamily(currentFamily);
       setFamilyName(currentFamily.name);
       setMembers(result.members);
+      setChildContent(normalizeChildContent(contentResult.content));
       setMemberCode({});
     } catch (cause) {
       showFailure(cause, "تعذر تحميل ملفات المملكة.");
@@ -290,6 +297,22 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
     }
   };
 
+  const saveChildContent = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!token || !selectedFamily) return;
+    beginAction();
+    try {
+      const result = await accountsApi.saveAdminContent(token, selectedFamily.id, childContent);
+      setChildContent(normalizeChildContent(result.content));
+      setShowContentSettings(false);
+      setNotice("تم حفظ محتوى الألعاب والقصص والمتجر والصناديق، وسيظهر للأطفال عند المزامنة.");
+    } catch (cause) {
+      showFailure(cause, "تعذر حفظ محتوى الطفل.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const refreshCurrent = async () => {
     if (selectedFamily) await loadMembers(selectedFamily);
     await loadFamilies();
@@ -390,6 +413,7 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
                   </div>
                 </div>
                 <div className="kingdom-actions">
+                  <button className="admin-btn primary" type="button" data-testid="button-open-child-content" onClick={() => setShowContentSettings(true)}><Sparkles size={16} /> تخصيص تجربة الطفل</button>
                   <button className="admin-btn outline-dark" type="button" data-testid="button-open-family-settings" onClick={() => setShowFamilySettings(true)}><Pencil size={16} /> إدارة المملكة</button>
                 </div>
               </header>
@@ -466,6 +490,19 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
         </Modal>
       )}
 
+      {showContentSettings && selectedFamily && (
+        <Modal title={`تخصيص تجربة أطفال ${selectedFamily.name}`} onClose={() => setShowContentSettings(false)} testId="modal-child-content">
+          <form className="admin-content-editor" onSubmit={saveChildContent}>
+            <p className="admin-modal-copy">عدّل الألعاب والقصص والمكافآت لهذه المملكة فقط. تُحفظ التغييرات مركزياً وتصل إلى جميع أجهزة الأطفال.</p>
+            <ContentEditorFields value={childContent} onChange={setChildContent} />
+            <div className="admin-form-actions sticky-actions">
+              <button className="admin-btn outline-dark" type="button" data-testid="button-reset-child-content" onClick={() => { if (window.confirm("هل تريد استعادة المحتوى الافتراضي في النموذج؟")) setChildContent(structuredClone(defaultChildContent)); }}>استعادة الافتراضي</button>
+              <button className="admin-btn primary" data-testid="button-save-child-content" disabled={loading}><Check size={16} /> {loading ? "جارٍ الحفظ…" : "حفظ ونشر للأطفال"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {showAdminSecurity && (
         <Modal title="تغيير رمز الأدمن" onClose={() => setShowAdminSecurity(false)} testId="modal-admin-security">
           <p className="admin-modal-copy">هذه الأداة مخفية عن لوحة العمل الرئيسية. بعد التغيير ستنتهي جلسة الأدمن الحالية.</p>
@@ -487,6 +524,99 @@ function Modal({ title, onClose, testId, children }: { title: string; onClose: (
         <header className="admin-modal-header"><h3>{title}</h3><button className="admin-modal-close" data-testid={`button-close-${testId}`} type="button" onClick={onClose} aria-label="إغلاق"><X size={20} /></button></header>
         {children}
       </section>
+    </div>
+  );
+}
+
+function ContentEditorFields({ value, onChange }: { value: ChildContentConfig; onChange: (value: ChildContentConfig) => void }) {
+  const updateLetter = (index: number, patch: Partial<ChildContentConfig["letterGames"][number]>) => {
+    onChange({ ...value, letterGames: value.letterGames.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
+  };
+  const updateNumber = (index: number, patch: Partial<ChildContentConfig["numberQuestions"][number]>) => {
+    onChange({ ...value, numberQuestions: value.numberQuestions.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
+  };
+  const updateStory = (index: number, patch: Partial<ChildContentConfig["readingStories"][number]>) => {
+    onChange({ ...value, readingStories: value.readingStories.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
+  };
+  const updateStore = (index: number, patch: Partial<ChildContentConfig["storeItems"][number]>) => {
+    onChange({ ...value, storeItems: value.storeItems.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
+  };
+  const rewardKinds: { value: RewardKind; label: string }[] = [
+    { value: "screen", label: "وقت شاشة" },
+    { value: "treat", label: "مكافأة عينية" },
+    { value: "money", label: "مصروف" },
+    { value: "game", label: "لعبة" },
+  ];
+
+  return (
+    <div className="content-editor-sections">
+      <details open>
+        <summary>درب الحروف <span>6 ألعاب</span></summary>
+        <div className="content-editor-list">
+          {value.letterGames.map((game, index) => (
+            <fieldset className="content-editor-card" key={game.id}>
+              <legend>اللعبة {index + 1}</legend>
+              <label className="admin-field"><span>الاسم</span><input className="admin-input" data-testid={`input-letter-title-${index}`} maxLength={120} value={game.title} onChange={(event) => updateLetter(index, { title: event.target.value })} required /></label>
+              <label className="admin-field"><span>التعليمات</span><input className="admin-input" maxLength={240} value={game.description} onChange={(event) => updateLetter(index, { description: event.target.value })} required /></label>
+              <label className="admin-field"><span>السؤال</span><input className="admin-input" maxLength={160} value={game.question} onChange={(event) => updateLetter(index, { question: event.target.value })} required /></label>
+              <label className="admin-field"><span>الخيارات — افصل بينها بعلامة |</span><input className="admin-input" value={game.options.join(" | ")} onChange={(event) => updateLetter(index, { options: event.target.value.split("|").map((item) => item.trim()).filter(Boolean) })} required /></label>
+              <label className="admin-field"><span>الإجابة الصحيحة</span><select className="admin-input" value={game.answer} onChange={(event) => updateLetter(index, { answer: event.target.value })}>{game.options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+            </fieldset>
+          ))}
+        </div>
+      </details>
+
+      <details>
+        <summary>كهف الأرقام <span>5 مسائل</span></summary>
+        <div className="content-editor-list compact">
+          {value.numberQuestions.map((question, index) => (
+            <fieldset className="content-editor-card" key={question.id}>
+              <legend>المسألة {index + 1}</legend>
+              <div className="admin-form-row">
+                <label className="admin-field"><span>صيغة المسألة</span><input className="admin-input" data-testid={`input-number-prompt-${index}`} maxLength={80} value={question.prompt} onChange={(event) => updateNumber(index, { prompt: event.target.value })} required /></label>
+                <label className="admin-field"><span>الإجابة</span><input className="admin-input" type="number" min={-10000} max={10000} value={question.answer} onChange={(event) => updateNumber(index, { answer: Number(event.target.value) })} required /></label>
+              </div>
+            </fieldset>
+          ))}
+        </div>
+      </details>
+
+      <details>
+        <summary>القراءة السريعة <span>6 قصص</span></summary>
+        <div className="content-editor-list">
+          {value.readingStories.map((story, index) => (
+            <fieldset className="content-editor-card" key={story.id}>
+              <legend>القصة {index + 1}</legend>
+              <label className="admin-field"><span>العنوان</span><input className="admin-input" data-testid={`input-story-title-${index}`} maxLength={120} value={story.title} onChange={(event) => updateStory(index, { title: event.target.value })} required /></label>
+              <label className="admin-field"><span>النص المشكول</span><textarea className="admin-input content-story-text" maxLength={2500} rows={5} value={story.text} onChange={(event) => updateStory(index, { text: event.target.value })} required /></label>
+            </fieldset>
+          ))}
+        </div>
+      </details>
+
+      <details>
+        <summary>متجر المكافآت <span>12 مكافأة • 5–25 نقطة</span></summary>
+        <div className="content-editor-list compact">
+          {value.storeItems.map((item, index) => (
+            <fieldset className="content-editor-card" key={item.id}>
+              <legend>المكافأة {index + 1}</legend>
+              <label className="admin-field"><span>الاسم</span><input className="admin-input" data-testid={`input-store-title-${index}`} maxLength={160} value={item.title} onChange={(event) => updateStore(index, { title: event.target.value })} required /></label>
+              <div className="admin-form-row">
+                <label className="admin-field"><span>السعر</span><input className="admin-input" type="number" min={5} max={25} value={item.cost} onChange={(event) => updateStore(index, { cost: Number(event.target.value) })} required /></label>
+                <label className="admin-field"><span>النوع</span><select className="admin-input" value={item.kind} onChange={(event) => updateStore(index, { kind: event.target.value as RewardKind })}>{rewardKinds.map((kind) => <option key={kind.value} value={kind.value}>{kind.label}</option>)}</select></label>
+              </div>
+            </fieldset>
+          ))}
+        </div>
+      </details>
+
+      <details>
+        <summary>صناديق الحظ <span>قيم الجوائز</span></summary>
+        <div className="content-editor-card box-values-editor">
+          <label className="admin-field"><span>الجوائز الكبرى — 3 قيم</span><input className="admin-input" data-testid="input-major-box-rewards" value={value.majorBoxRewards.join(", ")} onChange={(event) => onChange({ ...value, majorBoxRewards: event.target.value.split(",").map(Number).filter(Number.isFinite) })} required /><small>مثال: 50, 75, 100</small></label>
+          <label className="admin-field"><span>القيم المعروضة للتحفيز — قيمتان</span><input className="admin-input" data-testid="input-display-box-rewards" value={value.displayBoxRewards.join(", ")} onChange={(event) => onChange({ ...value, displayBoxRewards: event.target.value.split(",").map(Number).filter(Number.isFinite) })} required /><small>مثال: 10, 15</small></label>
+        </div>
+      </details>
     </div>
   );
 }
