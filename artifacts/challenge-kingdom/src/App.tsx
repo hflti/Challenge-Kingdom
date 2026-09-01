@@ -37,8 +37,10 @@ import {
 } from "lucide-react";
 import ayhamPhoto from "@assets/أيهم_1787868667283.jpeg";
 import kinanPhoto from "@assets/كنان_1787868667282.jpeg";
+import { AdminConsole } from "./components/admin-console";
+import { accountsApi, type FamilyMember } from "./lib/account-api";
 
-type ProfileId = "ayham" | "kinan";
+type ProfileId = string;
 type Screen = "choose" | "home" | "quest" | "gate" | "reward";
 type Tab = "quest" | "parent";
 
@@ -182,7 +184,7 @@ type ActiveChallenge = {
 
 type ActiveChallenges = Partial<Record<ProfileId, ActiveChallenge>>;
 type SyncedKingdomState = Omit<SavedState, "selectedId">;
-type ProfileAccessAction = "enter" | "switch";
+type ProfileAccessAction = "enter" | "switch" | "parent";
 
 type CloudStateResponse = {
   state: SyncedKingdomState;
@@ -194,7 +196,6 @@ type CloudStateResponse = {
 const storageKey = "challenge-kingdom-state-v1";
 const activeChallengesKey = "challenge-kingdom-active-v1";
 const soundPreferencesKey = "challenge-kingdom-sound-v1";
-const familyCodeKey = "challenge-kingdom-family-code-v1";
 const defaultSoundPreferences: SoundPreferences = { enabled: true, volume: 0.55 };
 const mapStages = ["بوابة البيت", "غابة القراءة", "ميدان التحدي", "قلعة الحكمة"];
 const totalStages = mapStages.length;
@@ -206,7 +207,6 @@ const pauseRechargeIntervalSeconds = 5 * 60;
 const pauseRechargeAmountSeconds = 30;
 const timeUpAlertSeconds = 15;
 const timeUpDecisionSeconds = 120;
-const parentCode = "1230";
 const defaultExtraChallenge: ExtraChallengeSettings = { title: "التحدي الإضافي", duration: 10 * 60, rewardPoints: 10 };
 const kingdomApiUrl = import.meta.env.VITE_KINGDOM_API_URL?.trim()
   || (import.meta.env.PROD ? "./api.php" : "/api/kingdom-state");
@@ -264,14 +264,6 @@ function readSoundPreferences(): SoundPreferences {
   }
 }
 
-function readFamilyCode() {
-  try {
-    return localStorage.getItem(familyCodeKey) ?? "";
-  } catch {
-    return "";
-  }
-}
-
 function toSyncedKingdomState(state: SavedState): SyncedKingdomState {
   return {
     completed: state.completed,
@@ -282,7 +274,7 @@ function toSyncedKingdomState(state: SavedState): SyncedKingdomState {
 }
 
 function isProfileRecord(value: unknown): value is Record<ProfileId, unknown> {
-  return value !== null && typeof value === "object" && "ayham" in value && "kinan" in value;
+  return value !== null && typeof value === "object";
 }
 
 function normalizeSyncedKingdomState(value: unknown): SyncedKingdomState | null {
@@ -291,18 +283,9 @@ function normalizeSyncedKingdomState(value: unknown): SyncedKingdomState | null 
   if (!isProfileRecord(candidate.completed) || !isProfileRecord(candidate.points) || !isProfileRecord(candidate.customMissions)) return null;
 
   return {
-    completed: {
-      ayham: typeof candidate.completed.ayham === "number" ? candidate.completed.ayham : 0,
-      kinan: typeof candidate.completed.kinan === "number" ? candidate.completed.kinan : 0,
-    },
-    points: {
-      ayham: typeof candidate.points.ayham === "number" ? candidate.points.ayham : 0,
-      kinan: typeof candidate.points.kinan === "number" ? candidate.points.kinan : 0,
-    },
-    customMissions: {
-      ayham: Array.isArray(candidate.customMissions.ayham) ? candidate.customMissions.ayham as SavedMission[] : [],
-      kinan: Array.isArray(candidate.customMissions.kinan) ? candidate.customMissions.kinan as SavedMission[] : [],
-    },
+    completed: Object.fromEntries(Object.entries(candidate.completed).map(([id, value]) => [id, typeof value === "number" ? value : 0])),
+    points: Object.fromEntries(Object.entries(candidate.points).map(([id, value]) => [id, typeof value === "number" ? value : 0])),
+    customMissions: Object.fromEntries(Object.entries(candidate.customMissions).map(([id, value]) => [id, Array.isArray(value) ? value as SavedMission[] : []])),
     extraChallenge: {
       title: typeof candidate.extraChallenge?.title === "string" && candidate.extraChallenge.title.trim() ? candidate.extraChallenge.title.trim() : defaultExtraChallenge.title,
       duration: typeof candidate.extraChallenge?.duration === "number" ? candidate.extraChallenge.duration : defaultExtraChallenge.duration,
@@ -646,8 +629,12 @@ function App() {
   const [extraSetupMinutes, setExtraSetupMinutes] = useState("");
   const [extraSetupPoints, setExtraSetupPoints] = useState("");
   const [extraSetupError, setExtraSetupError] = useState("");
-  const [familyCode, setFamilyCode] = useState(() => readFamilyCode());
-  const [syncStatus, setSyncStatus] = useState<"needs-code" | "connecting" | "synced" | "offline">(() => readFamilyCode() ? "connecting" : "needs-code");
+  const [familyCode, setFamilyCode] = useState("");
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState("");
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<"needs-code" | "connecting" | "synced" | "offline">("needs-code");
   const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => {
     const active = getInitialActiveChallenge();
     return active?.approvalStatus === "rejected" ? "no" : active?.completionChoice === "pending" ? "yes" : null;
@@ -671,7 +658,13 @@ function App() {
   const savedRef = useRef(saved);
   const activeChallengesRef = useRef(activeChallenges);
 
-  const profile = useMemo(() => profiles.find((item) => item.id === selectedId) ?? null, [selectedId]);
+  const availableProfiles = useMemo<Profile[]>(() => familyMembers.filter((member) => member.role === "child").map((member) => {
+    const visual = profiles.find((item) => item.id === member.id || item.name === member.name);
+    return visual ? { ...visual, ...member, id: member.id, grade: member.grade || visual.grade, title: member.title || visual.title, quote: member.quote || visual.quote, color: member.color || visual.color }
+      : { id: member.id, name: member.name, grade: member.grade || "بطل المملكة", title: member.title || "مستكشف جديد", quote: member.quote || "كل خطوة صغيرة تقود إلى كنز جديد.", initials: member.name.slice(0, 1), photo: "", color: member.color || "#5a78b5", icon: Shield, level: 1, xp: 0, streak: 0 };
+  }), [familyMembers]);
+  const owner = useMemo(() => familyMembers.find((member) => member.role === "owner") ?? null, [familyMembers]);
+  const profile = useMemo(() => availableProfiles.find((item) => item.id === selectedId) ?? null, [availableProfiles, selectedId]);
   const completed = profile ? saved.completed[profile.id] : 0;
   const points = profile ? saved.points[profile.id] : 0;
   const profileMissions = useMemo(
@@ -912,6 +905,21 @@ function App() {
   }, [familyCode]);
 
   useEffect(() => {
+    if (!familyCode) { setFamilyMembers([]); return; }
+    let cancelled = false;
+    setMembersLoading(true); setMembersError("");
+    void accountsApi.familyMembers(familyCode).then((result) => {
+      if (!cancelled) {
+        setFamilyMembers(result.members);
+        setSelectedId((current) => result.members.some((member) => member.id === current && member.role === "child") ? current : null);
+      }
+    }).catch((cause) => {
+      if (!cancelled) setMembersError(cause instanceof Error ? cause.message : "تعذر تحميل ملفات العائلة.");
+    }).finally(() => { if (!cancelled) setMembersLoading(false); });
+    return () => { cancelled = true; };
+  }, [familyCode]);
+
+  useEffect(() => {
     if (!familyCode || !cloudReadyRef.current) return;
     const signature = cloudSyncSignature(saved, activeChallenges);
     if (skipCloudSaveRef.current) {
@@ -969,7 +977,6 @@ function App() {
 
   const connectFamily = (code: string) => {
     const normalizedCode = code.trim();
-    localStorage.setItem(familyCodeKey, normalizedCode);
     cloudVersionRef.current = null;
     cloudReadyRef.current = false;
     lastCloudSignatureRef.current = null;
@@ -1172,19 +1179,19 @@ function App() {
     setProfileAccessError("");
   };
 
-  const verifyProfileAccess = () => {
-    if (profileAccessCode !== parentCode) {
-      setProfileAccessCode("");
-      setProfileAccessError("الرمز غير صحيح. اطلب مساعدة ولي الأمر.");
-      return;
-    }
+  const verifyProfileAccess = async () => {
     const action = profileAccessAction;
     const target = profileAccessTarget;
-    cancelProfileAccess();
-    if (action === "enter" && target) {
-      chooseProfile(target);
-    } else if (action === "switch") {
-      setScreen("choose");
+    const member = action === "enter" && target ? familyMembers.find((item) => item.id === target && item.role === "child") : owner;
+    if (!member) { setProfileAccessError(action === "enter" ? "هذا الملف غير متاح." : "أضف ولي أمر من لوحة الإدارة أولاً."); return; }
+    try {
+      await accountsApi.verifyMember(familyCode, member.id, profileAccessCode, action === "enter" ? "child" : "owner");
+      cancelProfileAccess();
+      if (action === "enter" && target) chooseProfile(target);
+      else if (action === "switch") setScreen("choose");
+      else if (action === "parent") { setTab("parent"); setScreen("home"); }
+    } catch {
+      setProfileAccessCode(""); setProfileAccessError("الرمز غير صحيح. حاول مرة أخرى.");
     }
   };
 
@@ -1241,12 +1248,10 @@ function App() {
     setUnlockCodeError("");
   };
 
-  const unlockExtraChallenge = () => {
+  const unlockExtraChallenge = async () => {
     if (!lockedMission) return;
-    if (unlockCode !== parentCode) {
-      setUnlockCodeError("الرمز غير صحيح. اطلب مساعدة ولي الأمر.");
-      return;
-    }
+    if (!owner) { setUnlockCodeError("أضف ولي أمر من لوحة الإدارة أولاً."); return; }
+    try { await accountsApi.verifyMember(familyCode, owner.id, unlockCode, "owner"); } catch { setUnlockCode(""); setUnlockCodeError("الرمز غير صحيح. اطلب مساعدة ولي الأمر."); return; }
     const nextMission = lockedMission;
     setUnlockCode("");
     setUnlockCodeError("");
@@ -1343,12 +1348,10 @@ function App() {
     setTimerRunning(true);
   };
 
-  const verifyFinishCode = () => {
+  const verifyFinishCode = async () => {
     if (timeUp && (alertSeconds > 0 || graceSeconds <= 0)) return;
-    if (finishCode !== parentCode) {
-      setFinishCodeError("الرمز غير صحيح. حاول مرة أخرى.");
-      return;
-    }
+    if (!owner) { setFinishCodeError("أضف ولي أمر من لوحة الإدارة أولاً."); return; }
+    try { await accountsApi.verifyMember(familyCode, owner.id, finishCode, "owner"); } catch { setFinishCode(""); setFinishCodeError("الرمز غير صحيح. حاول مرة أخرى."); return; }
     setTimerRunning(false);
     setTimerEndsAt(null);
     setPauseActive(false);
@@ -1549,8 +1552,9 @@ function App() {
     }));
   };
 
-  const resetMap = (enteredCode: string) => {
-    if (!profile || enteredCode !== "0321") return false;
+  const resetMap = async (enteredCode: string) => {
+    if (!profile || !owner) return false;
+    try { await accountsApi.verifyMember(familyCode, owner.id, enteredCode, "owner"); } catch { return false; }
     setSaved((current) => ({
       ...current,
       completed: { ...current.completed, [profile.id]: 0 },
@@ -1560,13 +1564,13 @@ function App() {
   };
 
   if (!familyCode) {
-    return <FamilySyncSetup onConnect={connectFamily} />;
+    return <FamilySyncSetup onConnect={connectFamily} onAdmin={() => setAdminOpen(true)} adminOpen={adminOpen} onCloseAdmin={() => setAdminOpen(false)} />;
   }
 
   if (screen === "choose" || !selectedId) {
     return (
       <>
-        <ProfileChooser onChoose={(id) => requestProfileAccess("enter", id)} />
+        <ProfileChooser profiles={availableProfiles} loading={membersLoading} error={membersError} onChoose={(id) => requestProfileAccess("enter", id)} />
         {profileAccessAction && (
           <ProfileAccessGate
             action={profileAccessAction}
@@ -1580,7 +1584,7 @@ function App() {
       </>
     );
   }
-  const activeProfile = profile ?? profiles[0];
+  const activeProfile = profile ?? availableProfiles[0];
 
   return (
     <div className="kingdom-app" dir="rtl">
@@ -1598,7 +1602,7 @@ function App() {
             <button data-testid="nav-quest" className={tab === "quest" ? "active" : ""} onClick={returnToQuest}>
               <House size={17} /> <span>ساحة المغامرة</span>
             </button>
-            <button data-testid="nav-parent" className={tab === "parent" ? "active" : ""} onClick={() => { setTab("parent"); setScreen("home"); }}>
+            <button data-testid="nav-parent" className={tab === "parent" ? "active" : ""} onClick={() => requestProfileAccess("parent")}>
               <ChartNoAxesColumnIncreasing size={17} /> <span>مرصد الوالدين</span>
             </button>
           </nav>
@@ -1632,9 +1636,9 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => requestProfileAccess("switch")} />
+              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => requestProfileAccess("switch")} />
             ) : screen === "home" ? (
-              <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => setTab("parent")} />
+              <HomeView profile={activeProfile} completed={completed} points={points} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
@@ -1647,7 +1651,7 @@ function App() {
       </div>
       <nav className="mobile-nav" aria-label="التنقل">
         <button data-testid="mobile-nav-quest" className={tab === "quest" ? "active" : ""} onClick={returnToQuest}><House size={18} /><span>المغامرة</span></button>
-        <button data-testid="mobile-nav-parent" className={tab === "parent" ? "active" : ""} onClick={() => { setTab("parent"); setScreen("home"); }}><Users size={18} /><span>الوالدان</span></button>
+        <button data-testid="mobile-nav-parent" className={tab === "parent" ? "active" : ""} onClick={() => requestProfileAccess("parent")}><Users size={18} /><span>الوالدان</span></button>
         <button data-testid="mobile-nav-profile" onClick={() => requestProfileAccess("switch")}><UserRound size={18} /><span>الأبطال</span></button>
       </nav>
       {profileAccessAction && (
@@ -1664,7 +1668,7 @@ function App() {
   );
 }
 
-function FamilySyncSetup({ onConnect }: { onConnect: (code: string) => void }) {
+function FamilySyncSetup({ onConnect, onAdmin, adminOpen, onCloseAdmin }: { onConnect: (code: string) => void; onAdmin: () => void; adminOpen: boolean; onCloseAdmin: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
 
@@ -1692,12 +1696,14 @@ function FamilySyncSetup({ onConnect }: { onConnect: (code: string) => void }) {
           {error && <p className="form-error" data-testid="status-family-code-error">{error}</p>}
           <button className="primary-button gold" type="submit" data-testid="button-connect-family"><KeyRound size={16} /> ربط المملكة</button>
         </form>
+         <button className="outline-button admin-entry-button" type="button" data-testid="button-admin-entry" onClick={onAdmin}><ShieldCheck size={16} /> دخول الإدارة</button>
       </section>
+       {adminOpen && <div className="admin-backdrop"><AdminConsole onClose={onCloseAdmin} /></div>}
     </div>
   );
 }
 
-function ProfileChooser({ onChoose }: { onChoose: (id: ProfileId) => void }) {
+function ProfileChooser({ profiles: selectableProfiles, loading, error, onChoose }: { profiles: Profile[]; loading: boolean; error: string; onChoose: (id: ProfileId) => void }) {
   return (
     <div className="kingdom-app" dir="rtl">
       <div className="profile-choose">
@@ -1710,12 +1716,12 @@ function ProfileChooser({ onChoose }: { onChoose: (id: ProfileId) => void }) {
           <h1 className="display-title" data-testid="heading-profile-selection">من سيبدأ الحكاية؟</h1>
           <p className="subtle">اختر اسمك لنعيد فتح خريطتك ونرى أي كنز ينتظرك اليوم.</p>
         </section>
-        <div className="profile-grid">
-          {profiles.map((item) => {
+        {loading ? <p className="subtle" role="status">جارٍ تحميل ملفات العائلة…</p> : error ? <p className="form-error" role="alert">{error}</p> : selectableProfiles.length === 0 ? <div className="panel empty-profile-guidance"><Users size={28} /><p>لا توجد ملفات أطفال بعد. اطلب من ولي الأمر إضافة طفل من لوحة الإدارة.</p></div> : <div className="profile-grid">
+          {selectableProfiles.map((item) => {
             const Icon = item.icon;
             return (
               <button key={item.id} className="profile-card" data-testid={`button-profile-${item.id}`} onClick={() => onChoose(item.id)}>
-                <div className="profile-avatar"><img className="profile-choose-photo" src={item.photo} alt={`صورة ${item.name}`} /><Icon className="profile-avatar-icon" size={47} strokeWidth={1.8} /></div>
+                <div className="profile-avatar">{item.photo ? <img className="profile-choose-photo" src={item.photo} alt={`صورة ${item.name}`} /> : <span aria-hidden="true">{item.initials}</span>}<Icon className="profile-avatar-icon" size={47} strokeWidth={1.8} /></div>
                 <h2>{item.name}</h2>
                 <div className="grade">{item.grade}</div>
                 <p className="quote">«{item.quote}»</p>
@@ -1723,7 +1729,7 @@ function ProfileChooser({ onChoose }: { onChoose: (id: ProfileId) => void }) {
               </button>
             );
           })}
-        </div>
+        </div>}
         <footer className="choose-foot"><LockKeyhole size={12} style={{ verticalAlign: "middle", marginLeft: 4 }} /> مساحة عائلية محفوظة على هذا الجهاز</footer>
       </div>
     </div>
@@ -1750,20 +1756,18 @@ function ProfileAccessGate({
       <section className="profile-access-card" role="dialog" aria-modal="true" aria-labelledby="profile-access-title" data-testid="panel-profile-access">
         <div className="profile-access-icon"><LockKeyhole size={24} /></div>
         <div className="eyebrow" style={{ justifyContent: "center" }}>بوابة العائلة</div>
-        <h2 id="profile-access-title">{action === "enter" ? "افتح ملف البطل" : "تأكيد تبديل البطل"}</h2>
-        <p>{action === "enter" ? "أدخل رمز ولي الأمر لفتح هذا الملف ومتابعة رحلته." : "تبديل البطل يحتاج موافقة ولي الأمر حتى تبقى لكل بطل رحلته الخاصة."}</p>
+         <h2 id="profile-access-title">{action === "enter" ? "افتح ملف البطل" : action === "parent" ? "افتح مرصد الوالدين" : "تأكيد تبديل البطل"}</h2>
+         <p>{action === "enter" ? "أدخل رمز الطفل الخاص بهذا الملف." : "أدخل رمز ولي الأمر لإكمال هذا الإجراء."}</p>
         <form onSubmit={(event) => { event.preventDefault(); onVerify(); }}>
-          <label htmlFor="profile-access-code">رمز ولي الأمر</label>
+           <label htmlFor="profile-access-code">{action === "enter" ? "رمز الطفل" : "رمز ولي الأمر"}</label>
           <input
             id="profile-access-code"
             className="code-input"
             data-testid="input-profile-access-code"
             type="password"
-            inputMode="numeric"
             autoComplete="off"
-            maxLength={4}
             value={code}
-            onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))}
+             onChange={(event) => onCode(event.target.value)}
             aria-describedby={error ? "profile-access-error" : undefined}
             autoFocus
           />
@@ -1824,7 +1828,7 @@ function HomeView({
   onStartCustomizedExtra: () => void;
   onCreateMission: (title: string, durationMinutes: number) => void;
   onDeleteMission: (missionId: string) => void;
-  onResetMap: (code: string) => boolean;
+  onResetMap: (code: string) => Promise<boolean>;
   onParent: () => void;
 }) {
   const [taskTitle, setTaskTitle] = useState("");
@@ -1851,8 +1855,8 @@ function HomeView({
     setTaskError("");
   };
 
-  const submitMapReset = () => {
-    if (onResetMap(resetCode)) {
+  const submitMapReset = async () => {
+    if (await onResetMap(resetCode)) {
       setResetCode("");
       setResetError("");
     } else {
@@ -1969,7 +1973,7 @@ function HomeView({
             <div className="map-points-summary"><strong>{points} / {mapTotalPoints}</strong><span>نقطة في خريطة {profile.name}</span><div className="map-points-track"><i style={{ width: `${Math.max(0, Math.min(100, (points / mapTotalPoints) * 100))}%` }} /></div></div>
             {points >= mapFinishPoints && <div className="map-complete">
               <div><strong>فاز {profile.name} بالمرحلة الأخيرة!</strong><span>أدخل رمز القائد لإعادة الرحلة إلى المرحلة الأولى.</span></div>
-              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={resetCode} onChange={(event) => setResetCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={submitMapReset}><RotateCcw size={15} /> إعادة الخريطة</button></div>
+              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" autoComplete="off" value={resetCode} onChange={(event) => setResetCode(event.target.value)} aria-label="رمز ولي الأمر لإعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={() => void submitMapReset()}><RotateCcw size={15} /> إعادة الخريطة</button></div>
               {resetError && <p className="form-error" data-testid="status-map-reset-error">{resetError}</p>}
             </div>}
         </div>
@@ -2172,19 +2176,21 @@ function RewardView({ result, profileName, onNew }: { result: { earned: number; 
 }
 
 function ParentView({
+  profiles: dynamicProfiles,
   saved,
   soundPreferences,
   onSoundPreferencesChange,
   onSaveExtraChallenge,
   onChooseProfile,
 }: {
+  profiles: Profile[];
   saved: SavedState;
   soundPreferences: SoundPreferences;
   onSoundPreferencesChange: (preferences: SoundPreferences) => void;
   onSaveExtraChallenge: (title: string, durationMinutes: number, rewardPoints: number) => void;
   onChooseProfile: () => void;
 }) {
-  const total = saved.completed.ayham + saved.completed.kinan;
+  const total = dynamicProfiles.reduce((sum, item) => sum + (saved.completed[item.id] ?? 0), 0);
   const [extraTitle, setExtraTitle] = useState(saved.extraChallenge.title);
   const [extraMinutes, setExtraMinutes] = useState(String(saved.extraChallenge.duration / 60));
   const [extraPoints, setExtraPoints] = useState(String(saved.extraChallenge.rewardPoints));
@@ -2216,8 +2222,7 @@ function ParentView({
       <div className="parent-banner"><div><div className="eyebrow">مرصد الوالدين • {getArabicDate()}</div><h1>غرفة القيادة العائلية</h1><p>ملخص لطيف لما أنجزه الأبطال اليوم، من دون تحويل الرحلة إلى جدول درجات.</p></div><div className="parent-total" data-testid="display-family-total"><strong>{total}</strong><span>مهمة في دفتر العائلة</span></div></div>
       <div className="parent-grid">
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">نبض الأبطال</h2><p className="panel-subtitle">هذا الأسبوع حتى الآن</p></div><Trophy color="hsl(var(--accent))" /></div><div className="child-progress">
-          <div className="child-progress-row"><img className="mini-avatar profile-photo" src={profiles[0].photo} alt="صورة أيهم" /><div className="child-progress-copy"><strong>أيهم</strong><span>{saved.completed.ayham} مهام مكتملة • {saved.points.ayham.toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, (saved.points.ayham / mapTotalPoints) * 100)}%` }} /></div></div></div>
-          <div className="child-progress-row"><img className="mini-avatar profile-photo" src={profiles[1].photo} alt="صورة كنان" /><div className="child-progress-copy"><strong>كنان</strong><span>{saved.completed.kinan} مهام مكتملة • {saved.points.kinan.toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, (saved.points.kinan / mapTotalPoints) * 100)}%` }} /></div></div></div>
+          {dynamicProfiles.length === 0 ? <p className="subtle">لا توجد ملفات أطفال.</p> : dynamicProfiles.map((child) => <div className="child-progress-row" key={child.id}>{child.photo ? <img className="mini-avatar profile-photo" src={child.photo} alt={`صورة ${child.name}`} /> : <span className="mini-avatar">{child.initials}</span>}<div className="child-progress-copy"><strong>{child.name}</strong><span>{saved.completed[child.id] ?? 0} مهام مكتملة • {(saved.points[child.id] ?? 0).toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, ((saved.points[child.id] ?? 0) / mapTotalPoints) * 100)}%` }} /></div></div></div>)}
         </div><button className="outline-button" data-testid="button-switch-from-parent" onClick={onChooseProfile} style={{ width: "100%", marginTop: 24 }}><Users size={15} /> تبديل ملف البطل</button></div>
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">سجل اليوم</h2><p className="panel-subtitle">محطات صغيرة تصنع عادة كبيرة.</p></div><ChartNoAxesColumnIncreasing color="hsl(var(--primary))" /></div><div className="timeline">
           <div className="timeline-item"><span className="timeline-icon"><Check size={14} /></span><div className="timeline-copy"><strong>تم تجهيز الرحلة</strong><p>الحقيبة جاهزة والأدوات في مكانها.</p></div></div>

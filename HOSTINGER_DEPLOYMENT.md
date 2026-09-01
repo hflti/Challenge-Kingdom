@@ -2,7 +2,7 @@
 
 ## 1. إعداد قاعدة MySQL
 
-أنشئ قاعدة MySQL ومستخدماً لها من لوحة Hostinger. لا تحتاج إلى إنشاء الجدول يدوياً؛ ينشئ `api.php` جدول `kingdom_states` تلقائياً عند أول طلب.
+أنشئ قاعدة MySQL ومستخدماً لها من لوحة Hostinger. لا تحتاج إلى إنشاء الجداول يدوياً؛ ينشئ `api.php` جداول `kingdom_states` و`families` و`family_members` و`admin_credentials` تلقائياً عند أول طلب.
 
 ## 2. إعداد PHP
 
@@ -19,7 +19,8 @@ artifacts/challenge-kingdom/dist/public/
 1. انسخ `api-config.example.php` باسم `api-config.php`.
 2. أدخل اسم قاعدة البيانات والمستخدم وكلمة المرور.
 3. غيّر `app_secret` إلى قيمة عشوائية ثابتة لا تقل عن 32 حرفاً.
-4. اترك `allowed_origin` فارغاً عندما تكون الواجهة و`api.php` على النطاق نفسه.
+4. عيّن `initial_admin_code` في ملف `api-config.php` الخاص فقط إلى رمز المدير الأولي (4–64 حرفاً). لا تضعه في Git أو في ملفات البناء. عند أول تسجيل دخول، يحفظ الخادم HMAC فقط؛ وبعد ذلك يمكن للمدير تدوير الرمز من API.
+5. اترك `allowed_origin` فارغاً عندما تكون الواجهة و`api.php` على النطاق نفسه.
 
 لا ترفع `api-config.php` إلى مستودع عام ولا تشارك محتواه.
 
@@ -51,6 +52,7 @@ PORT=5173 BASE_PATH=/ VITE_KINGDOM_API_URL=https://example.com/path/api.php pnpm
 - إضافة PDO MySQL مفعّلة.
 - قاعدة MySQL أو MariaDB تدعم InnoDB.
 - صلاحية إنشاء الجداول لمستخدم قاعدة البيانات عند أول تشغيل.
+- اجعل `api-config.php` قابلاً للقراءة من PHP فقط وغير قابل للوصول المباشر عبر الويب إن أمكن.
 
 ## 5. فحص سريع
 

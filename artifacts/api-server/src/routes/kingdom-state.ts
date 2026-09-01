@@ -1,7 +1,7 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { db, kingdomStatesTable } from "@workspace/db";
+import { db, familiesTable, kingdomStatesTable } from "@workspace/db";
 import {
   GetKingdomStateResponse,
   SaveKingdomStateBody,
@@ -21,6 +21,19 @@ function familyKeyFromRequest(rawCode: string | undefined): string | null {
   }
 
   return createHmac("sha256", secret).update(familyCode).digest("hex");
+}
+
+async function ensureFamilyForState(familyKey: string): Promise<void> {
+  await db
+    .insert(familiesTable)
+    .values({
+      id: randomUUID(),
+      // Legacy kingdom saves did not collect a family name. This neutral name
+      // lets those families be administered without deriving data from a code.
+      name: "Family",
+      familyKey,
+    })
+    .onConflictDoNothing({ target: familiesTable.familyKey });
 }
 
 router.get("/kingdom-state", async (req, res): Promise<void> => {
@@ -139,6 +152,7 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
         return;
       }
 
+      await ensureFamilyForState(familyKey);
       res.json(
         SaveKingdomStateResponse.parse({
           state: completedRecord.state,
@@ -163,6 +177,7 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
       .returning();
 
     if (createdRecord) {
+      await ensureFamilyForState(familyKey);
       res.json(
         SaveKingdomStateResponse.parse({
           state: createdRecord.state,
@@ -208,6 +223,7 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
     return;
   }
 
+  await ensureFamilyForState(familyKey);
   res.json(
     SaveKingdomStateResponse.parse({
       state: record.state,

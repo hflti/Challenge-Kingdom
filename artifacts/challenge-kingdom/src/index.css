@@ -337,6 +337,10 @@
 .family-sync-card .code-input { letter-spacing: .15em; }
 .family-sync-card form > span { color: hsl(var(--muted-foreground)); font-size: 10px; }
 .family-sync-card .primary-button { width: 100%; margin-top: 8px; }
+.admin-entry-button { width: 100%; margin-top: 12px; }
+.admin-backdrop { position: fixed; inset: 0; z-index: 120; overflow: auto; background: hsl(var(--background)); }
+.admin-backdrop .profile-choose { min-height: 100%; }
+.empty-profile-guidance { max-width: 520px; margin: 0 auto; text-align: center; }
 .choose-top { display: flex; justify-content: space-between; align-items: center; }
 .choose-logo { display: flex; align-items: center; gap: 10px; font-family: var(--app-font-serif); font-size: 22px; color: hsl(var(--secondary)); }
 .choose-logo .brand-mark { width: 38px; height: 38px; }
