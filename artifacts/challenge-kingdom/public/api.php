@@ -386,13 +386,21 @@ try {
     $pdo = connectDatabase($config);
     $action = trim((string)($_GET['action'] ?? ''));
     if ($action !== '') {
-        $adminActions = ['admin-families', 'admin-members', 'admin-create-member', 'admin-delete-member', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-code'];
-        if (!in_array($action, ['admin-login', 'family-members', 'verify-member', 'bootstrap-family', ...$adminActions], true)) respond(404, ['error' => 'Unknown action.']);
-        if (($action === 'admin-login' || $action === 'verify-member' || $action === 'bootstrap-family') && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
+        $adminActions = ['admin-families', 'admin-members', 'admin-create-family', 'admin-create-member', 'admin-delete-member', 'admin-delete-family', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-family-name', 'admin-change-code'];
+        if (!in_array($action, ['admin-reveal', 'admin-login', 'family-members', 'verify-member', 'bootstrap-family', ...$adminActions], true)) respond(404, ['error' => 'Unknown action.']);
+        if (in_array($action, ['admin-reveal', 'admin-login', 'verify-member', 'bootstrap-family'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
         if (in_array($action, ['admin-families', 'admin-members', 'family-members'], true) && $method !== 'GET') respond(405, ['error' => 'Method not allowed.']);
-        if (in_array($action, ['admin-create-member', 'admin-delete-member', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-code'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
+        if (in_array($action, ['admin-create-family', 'admin-create-member', 'admin-delete-member', 'admin-delete-family', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-family-name', 'admin-change-code'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
         if (in_array($action, $adminActions, true) && $action !== 'admin-login') requireAdmin($pdo, $config);
 
+        if ($action === 'admin-reveal') {
+            throttle('admin-reveal', 8, 300);
+            $data = readJsonBody();
+            expectPayload($data, ['code']);
+            $reveal = $config['admin_reveal_code'] ?? '';
+            if (is_string($reveal) && $reveal !== '' && is_string($data['code']) && hash_equals(codeHash($reveal, $config), codeHash($data['code'], $config))) respond(200, ['ok'=>true]);
+            respond(401, ['error'=>'Invalid administrator access code.']);
+        }
         if ($action === 'admin-login') {
             throttleLogin(); $data = readJsonBody(); expectPayload($data, ['code']);
             initializeAdminCredential($pdo, $config);
@@ -403,6 +411,21 @@ try {
         if ($action === 'admin-families') {
             $rows = $pdo->query('SELECT f.id, f.name, COUNT(m.id) AS member_count FROM families f LEFT JOIN family_members m ON m.family_id=f.id GROUP BY f.id, f.name ORDER BY f.created_at DESC')->fetchAll();
             respond(200, ['families' => array_map(fn($r) => ['id'=>$r['id'], 'name'=>$r['name'], 'memberCount'=>(int)$r['member_count']], $rows)]);
+        }
+        if ($action === 'admin-create-family') {
+            expectPayload($data = readJsonBody(), ['name', 'code']);
+            $name = validText($data['name'], 80, true);
+            $code = validCode($data['code']);
+            $key = codeHash($code, $config);
+            $exists = $pdo->prepare('SELECT id FROM families WHERE family_key=:key');
+            $exists->execute(['key'=>$key]);
+            if (is_array($exists->fetch())) respond(409, ['error'=>'That kingdom code is already in use.']);
+            $insert = $pdo->prepare('INSERT INTO families (id, family_key, name) VALUES (:id, :key, :name)');
+            $insert->execute(['id'=>opaqueId(), 'key'=>$key, 'name'=>$name]);
+            $family = $pdo->prepare('SELECT id,name FROM families WHERE family_key=:key');
+            $family->execute(['key'=>$key]);
+            $created = $family->fetch();
+            respond(201, ['family'=>['id'=>$created['id'], 'name'=>$created['name']]]);
         }
         if ($action === 'admin-members') {
             $id = validText($_GET['familyId'] ?? null, 64, true);
@@ -433,6 +456,29 @@ try {
             respond(200, ['family' => ['id' => $family['id'], 'name' => $family['name']]]);
         }
         $data = readJsonBody();
+        if ($action === 'admin-change-family-name') {
+            expectPayload($data, ['familyId', 'name']);
+            $name = validText($data['name'], 80, true);
+            $exists = $pdo->prepare('SELECT id FROM families WHERE id=:id');
+            $exists->execute(['id'=>$data['familyId']]);
+            if (!is_array($exists->fetch())) respond(404, ['error'=>'Family not found.']);
+            $q = $pdo->prepare('UPDATE families SET name=:name, updated_at=UTC_TIMESTAMP(3) WHERE id=:id');
+            $q->execute(['name'=>$name, 'id'=>$data['familyId']]);
+            respond(200, ['ok'=>true]);
+        }
+        if ($action === 'admin-delete-family') {
+            expectPayload($data, ['familyId', 'confirm']);
+            if (($data['confirm'] ?? null) !== true) respond(400, ['error'=>'Deletion confirmation is required.']);
+            $pdo->beginTransaction();
+            $q = $pdo->prepare('SELECT family_key FROM families WHERE id=:id FOR UPDATE');
+            $q->execute(['id'=>$data['familyId']]);
+            $family = $q->fetch();
+            if (!is_array($family)) { $pdo->rollBack(); respond(404, ['error'=>'Family not found.']); }
+            $pdo->prepare('DELETE FROM kingdom_states WHERE family_key=:key')->execute(['key'=>$family['family_key']]);
+            $pdo->prepare('DELETE FROM families WHERE id=:id')->execute(['id'=>$data['familyId']]);
+            $pdo->commit();
+            respond(200, ['ok'=>true]);
+        }
         if ($action === 'admin-create-member') {
             expectPayload($data,['familyId','role','name','code'],['grade','title','quote','color']);
             if (!is_string($data['familyId']) || !in_array($data['role'],['owner','child'],true)) respond(400,['error'=>'Member data is invalid.']);

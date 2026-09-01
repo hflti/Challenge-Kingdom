@@ -1666,8 +1666,18 @@ function App() {
     logout();
   };
 
+  const revealAdmin = async (code: string) => {
+    try {
+      await accountsApi.revealAdmin(code);
+      setAdminOpen(true);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   if (!familyCode) {
-    return <FamilySyncSetup onConnect={connectFamily} onAdmin={() => setAdminOpen(true)} adminOpen={adminOpen} onCloseAdmin={() => setAdminOpen(false)} />;
+    return <FamilySyncSetup onConnect={connectFamily} onAdminReveal={revealAdmin} adminOpen={adminOpen} onCloseAdmin={() => setAdminOpen(false)} />;
   }
 
   if (screen === "choose" || !selectedId) {
@@ -1775,7 +1785,7 @@ function App() {
   );
 }
 
-function FamilySyncSetup({ onConnect, onAdmin, adminOpen, onCloseAdmin }: { onConnect: (code: string) => Promise<void>; onAdmin: () => void; adminOpen: boolean; onCloseAdmin: () => void }) {
+function FamilySyncSetup({ onConnect, onAdminReveal, adminOpen, onCloseAdmin }: { onConnect: (code: string) => Promise<void>; onAdminReveal: (code: string) => Promise<boolean>; adminOpen: boolean; onCloseAdmin: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
 
@@ -1787,6 +1797,7 @@ function FamilySyncSetup({ onConnect, onAdmin, adminOpen, onCloseAdmin }: { onCo
       return;
     }
     try {
+      if (await onAdminReveal(normalizedCode)) return;
       await onConnect(normalizedCode);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "تعذر تجهيز العائلة. حاول مرة أخرى.");
@@ -1807,7 +1818,6 @@ function FamilySyncSetup({ onConnect, onAdmin, adminOpen, onCloseAdmin }: { onCo
           {error && <p className="form-error" data-testid="status-family-code-error">{error}</p>}
           <button className="primary-button gold" type="submit" data-testid="button-connect-family"><KeyRound size={16} /> ربط المملكة</button>
         </form>
-         <button className="outline-button admin-entry-button" type="button" data-testid="button-admin-entry" onClick={onAdmin}><ShieldCheck size={16} /> دخول الإدارة</button>
       </section>
        {adminOpen && <div className="admin-backdrop"><AdminConsole onClose={onCloseAdmin} /></div>}
     </div>

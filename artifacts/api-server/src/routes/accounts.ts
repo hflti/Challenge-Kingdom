@@ -211,6 +211,21 @@ router.post("/accounts", async (req, res): Promise<void> => {
   const action = req.query.action;
   const body = req.body as Record<string, unknown>;
 
+  if (action === "admin-reveal") {
+    if (limited(req, "admin-reveal")) {
+      res.status(429).json({ error: "Too many attempts. Please try again later." });
+      return;
+    }
+    const revealCode = process.env.ADMIN_REVEAL_CODE;
+    if (validCode(revealCode) && typeof body.code === "string" && sameHash(hashCode(body.code), hashCode(revealCode))) {
+      res.json({ ok: true });
+      return;
+    }
+    failed(req, "admin-reveal");
+    res.status(401).json({ error: "Invalid administrator access code." });
+    return;
+  }
+
   if (action === "admin-login") {
     if (loginLimited(req)) {
       res.status(429).json({ error: "Too many failed attempts. Please try again later." });
@@ -299,6 +314,67 @@ router.post("/accounts", async (req, res): Promise<void> => {
 
   if (!(await requireAdmin(req))) {
     res.status(401).json({ error: "Administrator authorization is required." });
+    return;
+  }
+
+  if (action === "admin-create-family") {
+    if (!validText(body.name, 80) || !validCode(body.code)) {
+      res.status(400).json({ error: "A valid kingdom name and code are required." });
+      return;
+    }
+    const name = body.name.trim();
+    const familyKey = hashCode(body.code);
+    const created = await db.transaction(async (tx) => {
+      const [collision] = await tx.select({ id: familiesTable.id }).from(familiesTable).where(eq(familiesTable.familyKey, familyKey));
+      if (collision) return "collision" as const;
+      const [stateCollision] = await tx.select({ familyKey: kingdomStatesTable.familyKey }).from(kingdomStatesTable).where(eq(kingdomStatesTable.familyKey, familyKey));
+      if (stateCollision) return "collision" as const;
+      const [family] = await tx.insert(familiesTable).values({ id: randomUUID(), name, familyKey }).returning();
+      return family;
+    });
+    if (created === "collision") {
+      res.status(409).json({ error: "That kingdom code is already in use." });
+      return;
+    }
+    res.status(201).json({ family: { id: created.id, name: created.name } });
+    return;
+  }
+
+  if (action === "admin-change-family-name") {
+    if (!validText(body.familyId, 128) || !validText(body.name, 80)) {
+      res.status(400).json({ error: "A valid family id and kingdom name are required." });
+      return;
+    }
+    const [family] = await db.update(familiesTable)
+      .set({ name: body.name.trim(), updatedAt: new Date() })
+      .where(eq(familiesTable.id, body.familyId))
+      .returning({ id: familiesTable.id });
+    if (!family) {
+      res.status(404).json({ error: "Family not found." });
+      return;
+    }
+    res.json({ ok: true });
+    return;
+  }
+
+  if (action === "admin-delete-family") {
+    if (!validText(body.familyId, 128) || body.confirm !== true) {
+      res.status(400).json({ error: "Deletion requires a family and confirmation." });
+      return;
+    }
+    const familyId = body.familyId;
+    const deleted = await db.transaction(async (tx) => {
+      const [family] = await tx.select().from(familiesTable).where(eq(familiesTable.id, familyId));
+      if (!family) return false;
+      await tx.delete(kingdomStatesTable).where(eq(kingdomStatesTable.familyKey, family.familyKey));
+      await tx.delete(familiesTable).where(eq(familiesTable.id, family.id));
+      return true;
+    });
+    if (!deleted) {
+      res.status(404).json({ error: "Family not found." });
+      return;
+    }
+    res.json({ ok: true });
     return;
   }
 
