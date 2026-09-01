@@ -399,6 +399,17 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
           {error && <p className="status-message error" role="alert" data-testid="status-admin-error">{error}</p>}
           {notice && <p className="status-message success" role="status" data-testid="status-admin-notice">{notice}</p>}
 
+          <section className="admin-section admin-security-section" aria-labelledby="admin-security-title">
+            <div className="admin-section-header">
+              <div><span className="admin-kicker">الحماية</span><h3 id="admin-security-title">رمز دخول الأدمن</h3></div>
+              <ShieldCheck size={22} aria-hidden="true" />
+            </div>
+            <form className="admin-settings-block admin-security-form" onSubmit={rotateAdminCode} autoComplete="off">
+              <p>غيّر رمز بوابة «إعادة ضبط» من هنا. سيُبطل الرمز القديم وجميع جلسات الأدمن فوراً.</p>
+              <div className="admin-member-code-row"><input className="admin-input code-input" data-testid="input-admin-new-code" type="password" name="admin_new_code" minLength={4} maxLength={64} value={adminCode} onChange={(event) => setAdminCode(event.target.value)} placeholder="رمز جديد" autoComplete="new-password" required /><button className="admin-btn outline-dark" data-testid="button-change-admin-code" disabled={loading}><ShieldCheck size={15} /> تغيير الرمز</button></div>
+            </form>
+          </section>
+
           {!selectedFamily ? (
             <div className="admin-empty-state" data-testid="empty-admin-family">
               <Crown aria-hidden="true" />
@@ -492,11 +503,6 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
             <h4>رمز المملكة</h4>
             <p>تغييره ينقل التقدم إلى الرمز الجديد ويلغي عمل الرمز القديم.</p>
             <div className="admin-member-code-row"><input className="admin-input code-input" data-testid="input-family-new-code" type="password" minLength={4} maxLength={64} value={familyCode} onChange={(event) => setFamilyCode(event.target.value)} placeholder="الرمز الجديد" autoComplete="new-password" required /><button className="admin-btn outline-dark" data-testid="button-change-family-code" disabled={loading}><KeyRound size={15} /> تغيير الرمز</button></div>
-          </form>
-          <form className="admin-settings-block" onSubmit={rotateAdminCode} autoComplete="off">
-            <h4>رمز دخول الأدمن</h4>
-            <p>هذا هو رمز بوابة «إعادة ضبط» الوحيدة. سيُبطل الرمز القديم وجميع جلسات الأدمن فوراً.</p>
-            <div className="admin-member-code-row"><input className="admin-input code-input" data-testid="input-admin-new-code" type="password" name="admin_new_code" minLength={4} maxLength={64} value={adminCode} onChange={(event) => setAdminCode(event.target.value)} placeholder="رمز الأدمن الجديد" autoComplete="new-password" required /><button className="admin-btn outline-dark" data-testid="button-change-admin-code" disabled={loading}><ShieldCheck size={15} /> تغيير رمز الأدمن</button></div>
           </form>
           <div className="admin-settings-block danger-zone">
             <h4>حذف المملكة نهائياً</h4>
