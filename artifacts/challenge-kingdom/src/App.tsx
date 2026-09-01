@@ -1917,7 +1917,7 @@ function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCl
              <label htmlFor="admin-reveal-code">رمز الدخول</label>
              <input id="admin-reveal-code" className="code-input" data-testid="input-admin-reveal-code" type="password" autoComplete="off" minLength={4} maxLength={64} value={revealCode} onChange={(event) => { setRevealCode(event.target.value); setRevealError(""); }} autoFocus />
              {revealError && <p className="form-error" data-testid="status-admin-reveal-error">{revealError}</p>}
-             <button className="secondary-button" type="submit" data-testid="button-submit-admin-reveal"><ShieldCheck size={15} /> دخول صفحة الأدمن</button>
+             <button className="secondary-button" type="submit" data-testid="button-submit-admin-reveal"><ShieldCheck size={15} /> موافق</button>
            </form>}
          </div>
       </section>
