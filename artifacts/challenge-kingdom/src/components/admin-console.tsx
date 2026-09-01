@@ -110,7 +110,7 @@ export function AdminConsole({ onClose }: AdminConsoleProps) {
     event.preventDefault();
     beginAction();
     try {
-      const session = await accountsApi.adminLogin(loginCode);
+      const session = await accountsApi.adminLogin(loginCode.trim());
       setLoginCode("");
       setToken(session.token);
     } catch (cause) {

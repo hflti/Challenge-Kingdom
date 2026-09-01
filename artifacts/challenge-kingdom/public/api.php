@@ -438,14 +438,16 @@ try {
             $data = readJsonBody();
             expectPayload($data, ['code']);
             $reveal = $config['admin_reveal_code'] ?? '';
-            if (is_string($reveal) && $reveal !== '' && is_string($data['code']) && hash_equals(codeHash($reveal, $config), codeHash($data['code'], $config))) respond(200, ['ok'=>true]);
+            $submittedCode = is_string($data['code']) ? trim($data['code']) : null;
+            if (is_string($reveal) && $reveal !== '' && is_string($submittedCode) && hash_equals(codeHash($reveal, $config), codeHash($submittedCode, $config))) respond(200, ['ok'=>true]);
             respond(401, ['error'=>'Invalid administrator access code.']);
         }
         if ($action === 'admin-login') {
             throttleLogin(); $data = readJsonBody(); expectPayload($data, ['code']);
             initializeAdminCredential($pdo, $config);
             $credential = $pdo->query('SELECT code_hash, credential_version FROM admin_credentials WHERE id = 1')->fetch();
-            if (!is_array($credential) || !is_string($data['code']) || !hash_equals($credential['code_hash'], codeHash($data['code'], $config))) respond(401, ['error' => 'Invalid administrator code.']);
+            $submittedCode = is_string($data['code']) ? trim($data['code']) : null;
+            if (!is_array($credential) || !is_string($submittedCode) || !hash_equals($credential['code_hash'], codeHash($submittedCode, $config))) respond(401, ['error' => 'Invalid administrator code.']);
             respond(200, adminToken($credential, $config));
         }
         if ($action === 'admin-families') {

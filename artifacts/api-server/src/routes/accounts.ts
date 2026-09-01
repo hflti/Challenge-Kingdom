@@ -291,7 +291,8 @@ router.post("/accounts", async (req, res): Promise<void> => {
       res.status(429).json({ error: "Too many failed attempts. Please try again later." });
       return;
     }
-    if (!validCode(body.code)) {
+    const submittedCode = typeof body.code === "string" ? body.code.trim() : body.code;
+    if (!validCode(submittedCode)) {
       recordLoginFailure(req);
       res.status(400).json({ error: "A valid administrator code is required." });
       return;
@@ -311,7 +312,7 @@ router.post("/accounts", async (req, res): Promise<void> => {
       }).onConflictDoNothing().returning();
       credential = created ?? (await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID)))[0];
     }
-    const submittedHash = hashCode(body.code);
+    const submittedHash = hashCode(submittedCode);
     const configuredCode = process.env.ADMIN_CODE;
     const configuredHash = validCode(configuredCode) ? hashCode(configuredCode) : null;
     const matchesStoredCredential = Boolean(credential && sameHash(submittedHash, credential.codeHash));
