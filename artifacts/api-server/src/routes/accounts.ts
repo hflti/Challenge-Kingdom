@@ -9,6 +9,7 @@ import {
   membersTable,
 } from "@workspace/db";
 import { signMemberToken } from "../lib/member-auth";
+import { isValidChildContent } from "../lib/child-content-validator";
 
 const router: IRouter = Router();
 const ADMIN_CREDENTIAL_ID = "global";
@@ -48,54 +49,6 @@ function optionalText(value: unknown, maxLength: number): string | null | undefi
   if (value === undefined) return undefined;
   if (value === null) return null;
   return typeof value === "string" && value.length <= maxLength ? value.trim() : undefined;
-}
-
-function validChildContent(value: unknown): value is JsonMap {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const content = value as JsonMap;
-  const text = (item: unknown, max: number) => typeof item === "string" && item.trim().length > 0 && item.length <= max;
-  const letterGames = content.letterGames;
-  const numberQuestions = content.numberQuestions;
-  const readingStories = content.readingStories;
-  const storeItems = content.storeItems;
-  const majorRewards = content.majorBoxRewards;
-  const displayRewards = content.displayBoxRewards;
-  if (!Array.isArray(letterGames) || letterGames.length !== 6 || !letterGames.every((raw) => {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
-    const item = raw as JsonMap;
-    return text(item.id, 80) && text(item.title, 120) && text(item.description, 240) && text(item.question, 160)
-      && Array.isArray(item.options) && item.options.length >= 2 && item.options.length <= 6
-       && item.options.every((option) => text(option, 120))
-       && new Set(item.options).size === item.options.length
-       && text(item.answer, 120) && item.options.includes(item.answer);
-  })) return false;
-  if (new Set(letterGames.map((item) => (item as JsonMap).id)).size !== letterGames.length) return false;
-  if (!Array.isArray(numberQuestions) || numberQuestions.length !== 5 || !numberQuestions.every((raw) => {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
-    const item = raw as JsonMap;
-    return text(item.id, 80) && text(item.prompt, 80) && Number.isInteger(item.answer) && Number(item.answer) >= -10000 && Number(item.answer) <= 10000;
-  })) return false;
-  if (new Set(numberQuestions.map((item) => (item as JsonMap).id)).size !== numberQuestions.length) return false;
-  if (!Array.isArray(readingStories) || readingStories.length !== 6 || !readingStories.every((raw) => {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
-    const item = raw as JsonMap;
-    return text(item.id, 80) && text(item.title, 120) && text(item.text, 2500);
-  })) return false;
-  if (new Set(readingStories.map((item) => (item as JsonMap).id)).size !== readingStories.length) return false;
-  if (!Array.isArray(storeItems) || storeItems.length !== 12 || !storeItems.every((raw) => {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
-    const item = raw as JsonMap;
-    return text(item.id, 80) && text(item.title, 160) && Number.isInteger(item.cost)
-      && Number(item.cost) >= 5 && Number(item.cost) <= 25
-      && ["screen", "treat", "money", "game"].includes(String(item.kind));
-  })) return false;
-  if (new Set(storeItems.map((item) => (item as JsonMap).id)).size !== storeItems.length) return false;
-  const validRewards = (items: unknown, expectedLength: number) =>
-    Array.isArray(items) && items.length === expectedLength
-    && items.every((item) => Number.isInteger(item) && Number(item) > 0 && Number(item) <= 10000)
-    && new Set(items).size === items.length;
-  if (!validRewards(majorRewards, 3) || !validRewards(displayRewards, 2)) return false;
-  return Math.min(...(majorRewards as number[])) > Math.max(...(displayRewards as number[]));
 }
 
 function clientKey(req: Request): string {
@@ -373,7 +326,7 @@ router.post("/accounts", async (req, res): Promise<void> => {
   }
 
   if (action === "admin-content") {
-    if (!validText(body.familyId, 128) || !validChildContent(body.content)) {
+    if (!validText(body.familyId, 128) || !isValidChildContent(body.content)) {
       res.status(400).json({ error: "The child content settings are invalid." });
       return;
     }

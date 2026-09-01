@@ -1,0 +1,89 @@
+{
+  "rules": {
+    "letterGamesCount": 6,
+    "numberQuestionsCount": 5,
+    "readingStoriesCount": 6,
+    "storeItemsCount": 12,
+    "letterGameIdMaxLength": 80,
+    "letterGameTitleMaxLength": 120,
+    "letterGameDescriptionMaxLength": 240,
+    "letterGameQuestionMaxLength": 160,
+    "letterGameOptionMinCount": 2,
+    "letterGameOptionMaxCount": 6,
+    "letterGameOptionMaxLength": 120,
+    "numberQuestionIdMaxLength": 80,
+    "numberQuestionPromptMaxLength": 80,
+    "numberAnswerMin": -10000,
+    "numberAnswerMax": 10000,
+    "readingStoryIdMaxLength": 80,
+    "readingStoryTitleMaxLength": 120,
+    "readingStoryTextMaxLength": 2500,
+    "storeItemIdMaxLength": 80,
+    "storeItemTitleMaxLength": 160,
+    "storeCostMin": 5,
+    "storeCostMax": 25,
+    "majorBoxRewardCount": 3,
+    "displayBoxRewardCount": 2,
+    "boxRewardMin": 1,
+    "boxRewardMax": 10000,
+    "rewardKinds": ["screen", "treat", "money", "game"]
+  },
+  "baseContent": {
+    "letterGames": [
+      {"id":"match-letter","title":"طابق الحرف","description":"اختر الحرف الذي يبدأ به اسم الصورة.","question":"بَاب","options":["ب","ت","م"],"answer":"ب"},
+      {"id":"order-letters","title":"رتّب الحروف","description":"ما الكلمة الصحيحة؟","question":"ب ـ ا ـ ت ـ ك","options":["كِتَاب","بَاتِك","تَابِك"],"answer":"كِتَاب"},
+      {"id":"missing-letter","title":"الحرف الناقص","description":"أكمل الكلمة بالحرف المناسب.","question":"قَلَـ","options":["م","ب","ر"],"answer":"م"},
+      {"id":"letter-sound","title":"صوت الحرف","description":"أي كلمة تبدأ بصوت (س)؟","question":"س","options":["سَمَك","قَمَر","بَيْت"],"answer":"سَمَك"},
+      {"id":"english-match","title":"English match","description":"Choose the word that starts with B.","question":"B","options":["Book","Moon","Fish"],"answer":"Book"},
+      {"id":"letter-order","title":"Letter order","description":"Which letter comes after C?","question":"A ـ B ـ C ـ ?","options":["D","E","F"],"answer":"D"}
+    ],
+    "numberQuestions": [
+      {"id":"numbers-1","prompt":"6 + 3","answer":9},
+      {"id":"numbers-2","prompt":"19 − 4","answer":15},
+      {"id":"numbers-3","prompt":"5 × 4","answer":20},
+      {"id":"numbers-4","prompt":"32 ÷ 4","answer":8},
+      {"id":"numbers-5","prompt":"12 + 8","answer":20}
+    ],
+    "readingStories": [
+      {"id":"fast-rabbit","title":"الأرنبُ السَّريعُ","text":"كَانَ أَرْنَبٌ صَغِيرٌ يَجْرِي فِي الْحَدِيقَةِ."},
+      {"id":"moon-trip","title":"رِحْلَةُ الْقَمَرِ","text":"نَظَرَ سَالِمٌ إِلَى السَّمَاءِ لَيْلًا."},
+      {"id":"tree-friend","title":"صَدِيقُ الشَّجَرَةِ","text":"زَرَعَتْ لَيْلَى شَجَرَةً صَغِيرَةً أَمَامَ الْبَيْتِ."},
+      {"id":"knowledge-treasure","title":"كَنْزُ الْمَعْرِفَةِ","text":"فَتَحَ عُمَرُ كِتَابَهُ، فَوَجَدَ فِيهِ خَرِيطَةً قَدِيمَةً."},
+      {"id":"busy-bee","title":"النَّحْلَةُ الْمُجْتَهِدَةُ","text":"خَرَجَتْ نَحْلَةٌ نَشِيطَةٌ تَبْحَثُ عَنْ رَحِيقٍ."},
+      {"id":"golden-key","title":"مِفْتَاحُ الْبَابِ","text":"وَجَدَ فَهْدٌ مِفْتَاحًا ذَهَبِيًّا فِي صُنْدُوقٍ صَغِيرٍ."}
+    ],
+    "storeItems": [
+      {"id":"tablet-15","title":"استخدام الآيباد 15 دقيقة","cost":15,"kind":"screen"},
+      {"id":"chocolate","title":"قطعة شوكولاتة","cost":10,"kind":"treat"},
+      {"id":"pocket-money","title":"زيادة 2 ريال في المصروف","cost":10,"kind":"money"},
+      {"id":"game-1","title":"لعبة ممتعة: سباق النجوم","cost":10,"kind":"game"},
+      {"id":"game-2","title":"لعبة ممتعة: صائد الحروف","cost":10,"kind":"game"},
+      {"id":"game-3","title":"لعبة ممتعة: ذاكرة الأبطال","cost":10,"kind":"game"},
+      {"id":"game-4","title":"لعبة ممتعة: تحدي الألوان","cost":10,"kind":"game"},
+      {"id":"game-5","title":"لعبة ممتعة: متاهة الكنز","cost":10,"kind":"game"},
+      {"id":"game-6","title":"لعبة ممتعة: قفزة القمر","cost":10,"kind":"game"},
+      {"id":"meal-choice","title":"اختيار وجبة الغد","cost":20,"kind":"treat"},
+      {"id":"late-night","title":"نصف ساعة إضافية قبل النوم","cost":25,"kind":"screen"},
+      {"id":"small-toy","title":"لعبة صغيرة أو ملصقات","cost":25,"kind":"treat"}
+    ],
+    "majorBoxRewards": [50,75,100],
+    "displayBoxRewards": [10,15]
+  },
+  "cases": [
+    {"name":"المحتوى الافتراضي صالح","expected":true,"changes":[]},
+    {"name":"الحد الأدنى والأقصى لسعر المتجر صالحان","expected":true,"changes":[{"path":["storeItems",0,"cost"],"value":5},{"path":["storeItems",1,"cost"],"value":25}]},
+    {"name":"سعر المتجر الأقل من الحد مرفوض","expected":false,"changes":[{"path":["storeItems",0,"cost"],"value":4}]},
+    {"name":"سعر المتجر الأعلى من الحد مرفوض","expected":false,"changes":[{"path":["storeItems",0,"cost"],"value":26}]},
+    {"name":"الحد الأعلى لقيمة الصندوق صالح","expected":true,"changes":[{"path":["majorBoxRewards"],"value":[9998,9999,10000]},{"path":["displayBoxRewards"],"value":[1,2]}]},
+    {"name":"قيمة الصندوق الصفرية مرفوضة","expected":false,"changes":[{"path":["majorBoxRewards"],"value":[0,50,100]}]},
+    {"name":"قيمة الصندوق فوق الحد مرفوضة","expected":false,"changes":[{"path":["majorBoxRewards"],"value":[50,100,10001]}]},
+    {"name":"المعرّف المكرر مرفوض","expected":false,"changes":[{"path":["storeItems",1,"id"],"value":"tablet-15"}]},
+    {"name":"الإجابة خارج الخيارات مرفوضة","expected":false,"changes":[{"path":["letterGames",0,"answer"],"value":"غير موجود"}]},
+    {"name":"النص عند الحد بعد المسافات صالح","expected":true,"changes":[{"path":["letterGames",0,"title"],"value":{"repeat":"x","count":120}}]},
+    {"name":"النص بعد الحد مرفوض","expected":false,"changes":[{"path":["letterGames",0,"title"],"value":{"repeat":"x","count":121}}]},
+    {"name":"المسألة عند حدود الإجابة صالحة","expected":true,"changes":[{"path":["numberQuestions",0,"answer"],"value":-10000},{"path":["numberQuestions",1,"answer"],"value":10000}]},
+    {"name":"الإجابة العشرية مرفوضة","expected":false,"changes":[{"path":["numberQuestions",0,"answer"],"value":9.5}]},
+    {"name":"خيارات الحروف المكررة مرفوضة","expected":false,"changes":[{"path":["letterGames",0,"options"],"value":["ب","ب","م"]}]},
+    {"name":"الجائزة الكبرى لا تتجاوز التحفيز مرفوضة","expected":false,"changes":[{"path":["majorBoxRewards"],"value":[10,20,30]},{"path":["displayBoxRewards"],"value":[10,15]}]}
+  ]
+}
