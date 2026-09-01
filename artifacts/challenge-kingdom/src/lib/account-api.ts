@@ -34,7 +34,7 @@ export type MemberSession = {
 type ApiErrorBody = { error?: string; message?: string };
 
 const accountApiUrl = import.meta.env.VITE_ACCOUNTS_API_URL?.trim()
-  || (import.meta.env.PROD ? "./api.php" : "/api/accounts");
+  || "/api/accounts";
 
 function endpoint(action: string, query?: Record<string, string | undefined>) {
   const params = new URLSearchParams({ action });

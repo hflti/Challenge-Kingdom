@@ -215,8 +215,8 @@ const timeUpAlertSeconds = 15;
 const timeUpDecisionSeconds = 120;
 const defaultExtraChallenge: ExtraChallengeSettings = { title: "التحدي الإضافي", duration: 10 * 60, rewardPoints: 10 };
 const kingdomApiUrl = import.meta.env.VITE_KINGDOM_API_URL?.trim()
-  || (import.meta.env.PROD ? "./api.php" : "/api/kingdom-state");
-const kingdomApiSaveMethod = import.meta.env.PROD ? "POST" : "PUT";
+  || "/api/kingdom-state";
+const kingdomApiSaveMethod = "PUT";
 
 function readSavedState(): SavedState {
   const fallback: SavedState = {
