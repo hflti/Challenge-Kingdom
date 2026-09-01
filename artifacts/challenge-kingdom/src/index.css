@@ -200,6 +200,10 @@
 .breadcrumb { color: hsl(var(--muted-foreground)); font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .breadcrumb b { color: hsl(var(--foreground)); }
 .top-actions { display: flex; align-items: center; gap: 10px; }
+.topbar-session-actions, .choose-header-actions { display: flex; align-items: center; gap: 7px; }
+.header-nav-button { min-height: 34px; padding: 0 10px; font-size: 11px; white-space: nowrap; }
+.logout-button { color: #9c4242; border-color: rgba(156,66,66,.28); background: rgba(255,225,223,.42); }
+.logout-button:hover { color: #7d2f32; background: #ffe1df; }
 .date-chip { padding: 8px 12px; border: 1px solid hsl(var(--border)); border-radius: 999px; color: hsl(var(--muted-foreground)); font-size: 12px; background: rgba(255,255,255,.28); }
 .sync-chip { padding: 7px 10px; border-radius: 999px; color: hsl(var(--muted-foreground)); background: hsl(var(--muted)); font-size: 10px; font-weight: 800; white-space: nowrap; }
 .sync-chip.synced { color: #286044; background: #dff4e4; }

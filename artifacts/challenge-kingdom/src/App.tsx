@@ -15,6 +15,7 @@ import {
   House,
   KeyRound,
   LockKeyhole,
+  LogOut,
   Map,
   Pause,
   PenLine,
@@ -1623,6 +1624,48 @@ function App() {
     return true;
   };
 
+  const logout = () => {
+    memberTokenRef.current = null;
+    memberRoleRef.current = null;
+    setMemberToken(null);
+    setFamilyCode("");
+    setFamilyMembers([]);
+    setMembersError("");
+    setSelectedId(null);
+    setSaved((current) => ({ ...current, selectedId: null }));
+    setScreen("choose");
+    setTab("quest");
+    setProfileAccessAction(null);
+    setProfileAccessTarget(null);
+    setProfileAccessCode("");
+    setProfileAccessError("");
+    setFinishCode("");
+    setUnlockCode("");
+    cloudVersionRef.current = null;
+    cloudReadyRef.current = false;
+    lastCloudSignatureRef.current = null;
+  };
+
+  const goBack = () => {
+    if (screen === "quest" || screen === "gate" || screen === "reward") {
+      setScreen("home");
+      setTab("quest");
+      return;
+    }
+    if (tab === "parent") {
+      setTab("quest");
+      setScreen("home");
+      return;
+    }
+    if (screen === "home") {
+      setSelectedId(null);
+      setTab("quest");
+      setScreen("choose");
+      return;
+    }
+    logout();
+  };
+
   if (!familyCode) {
     return <FamilySyncSetup onConnect={connectFamily} onAdmin={() => setAdminOpen(true)} adminOpen={adminOpen} onCloseAdmin={() => setAdminOpen(false)} />;
   }
@@ -1630,7 +1673,7 @@ function App() {
   if (screen === "choose" || !selectedId) {
     return (
       <>
-        <ProfileChooser profiles={availableProfiles} loading={membersLoading} error={membersError} onChoose={(id) => requestProfileAccess("enter", id)} />
+        <ProfileChooser profiles={availableProfiles} loading={membersLoading} error={membersError} onChoose={(id) => requestProfileAccess("enter", id)} onBack={logout} onLogout={logout} />
         {profileAccessAction && (
           <ProfileAccessGate
             action={profileAccessAction}
@@ -1691,6 +1734,10 @@ function App() {
                 <span>تبديل البطل</span>
                 <ChevronLeft size={14} />
               </button>
+              <div className="topbar-session-actions">
+                <button className="outline-button header-nav-button" type="button" data-testid="button-go-back" aria-label="العودة للصفحة السابقة" onClick={goBack}><ArrowLeft size={15} /> العودة</button>
+                <button className="outline-button header-nav-button logout-button" type="button" data-testid="button-logout" aria-label="تسجيل الخروج" onClick={logout}><LogOut size={15} /> تسجيل الخروج</button>
+              </div>
             </div>
           </header>
 
@@ -1767,13 +1814,31 @@ function FamilySyncSetup({ onConnect, onAdmin, adminOpen, onCloseAdmin }: { onCo
   );
 }
 
-function ProfileChooser({ profiles: selectableProfiles, loading, error, onChoose }: { profiles: Profile[]; loading: boolean; error: string; onChoose: (id: ProfileId) => void }) {
+function ProfileChooser({
+  profiles: selectableProfiles,
+  loading,
+  error,
+  onChoose,
+  onBack,
+  onLogout,
+}: {
+  profiles: Profile[];
+  loading: boolean;
+  error: string;
+  onChoose: (id: ProfileId) => void;
+  onBack: () => void;
+  onLogout: () => void;
+}) {
   return (
     <div className="kingdom-app" dir="rtl">
       <div className="profile-choose">
         <header className="choose-top">
           <div className="choose-logo"><div className="brand-mark"><Crown size={21} /></div><span>مملكة التحديات</span></div>
-          <span className="choose-date">{getArabicDate()}</span>
+          <div className="choose-header-actions">
+            <span className="choose-date">{getArabicDate()}</span>
+            <button className="outline-button header-nav-button" type="button" data-testid="button-go-back-choose" aria-label="العودة لربط المملكة" onClick={onBack}><ArrowLeft size={15} /> العودة</button>
+            <button className="outline-button header-nav-button logout-button" type="button" data-testid="button-logout-choose" aria-label="تسجيل الخروج" onClick={onLogout}><LogOut size={15} /> تسجيل الخروج</button>
+          </div>
         </header>
         <section className="choose-intro">
           <div className="eyebrow" style={{ justifyContent: "center" }}>بوابة الأبطال</div>
