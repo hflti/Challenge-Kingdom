@@ -32,6 +32,12 @@ export type StoreItemContent = {
   kind: RewardKind;
 };
 
+export type PointRewardsContent = {
+  letterAnswer: number;
+  numberAnswer: number;
+  readingStory: number;
+};
+
 export type ChildContentConfig = {
   letterGames: LetterGameContent[];
   numberQuestions: NumberQuestionContent[];
@@ -39,6 +45,7 @@ export type ChildContentConfig = {
   storeItems: StoreItemContent[];
   majorBoxRewards: number[];
   displayBoxRewards: number[];
+  pointRewards: PointRewardsContent;
 };
 
 export const defaultChildContent: ChildContentConfig = {
@@ -58,12 +65,7 @@ export const defaultChildContent: ChildContentConfig = {
     { id: "numbers-5", prompt: "12 + 8", answer: 20 },
   ],
   readingStories: [
-    { id: "fast-rabbit", title: "الأرنبُ السَّريعُ", text: "كَانَ أَرْنَبٌ صَغِيرٌ يَجْرِي فِي الْحَدِيقَةِ. رَأَى زَهْرَةً جَمِيلَةً، فَتَوَقَّفَ لِيَشُمَّ عِطْرَهَا. ثُمَّ عَادَ إِلَى أَصْدِقَائِهِ فَرِحًا." },
-    { id: "moon-trip", title: "رِحْلَةُ الْقَمَرِ", text: "نَظَرَ سَالِمٌ إِلَى السَّمَاءِ لَيْلًا. كَانَ الْقَمَرُ مُضِيئًا وَالنُّجُومُ حَوْلَهُ لَامِعَةً. تَمَنَّى أَنْ يَزُورَ مَرْصَدًا لِيَرَى الْكَوَاكِبَ عَنْ قُرْبٍ." },
-    { id: "tree-friend", title: "صَدِيقُ الشَّجَرَةِ", text: "زَرَعَتْ لَيْلَى شَجَرَةً صَغِيرَةً أَمَامَ الْبَيْتِ. سَقَتْهَا كُلَّ صَبَاحٍ، وَحَمَتْهَا مِنَ الرِّيحِ. بَعْدَ أَيَّامٍ ظَهَرَتْ أَوْرَاقٌ خَضْرَاءُ." },
-    { id: "knowledge-treasure", title: "كَنْزُ الْمَعْرِفَةِ", text: "فَتَحَ عُمَرُ كِتَابَهُ، فَوَجَدَ فِيهِ خَرِيطَةً قَدِيمَةً. قَادَتْهُ الْخَرِيطَةُ إِلَى أَسْئِلَةٍ مُثِيرَةٍ. كُلَّمَا قَرَأَ سَطْرًا، اكْتَشَفَ كَنْزًا جَدِيدًا." },
-    { id: "busy-bee", title: "النَّحْلَةُ الْمُجْتَهِدَةُ", text: "خَرَجَتْ نَحْلَةٌ نَشِيطَةٌ تَبْحَثُ عَنْ رَحِيقٍ. زَارَتْ أَزْهَارًا كَثِيرَةً وَعَادَتْ إِلَى الْخَلِيَّةِ. تَعَلَّمَتْ أَنَّ الْعَمَلَ مَعَ الْفَرِيقِ يُقَرِّبُ النَّجَاحَ." },
-    { id: "golden-key", title: "مِفْتَاحُ الْبَابِ", text: "وَجَدَ فَهْدٌ مِفْتَاحًا ذَهَبِيًّا فِي صُنْدُوقٍ صَغِيرٍ. سَأَلَ أُمَّهُ قَبْلَ أَنْ يَفْتَحَ الْبَابَ الْقَدِيمَ. كَانَ خَلْفَ الْبَابِ مَكْتَبَةٌ مُلْهَمَةٌ." },
+    ...contract.baseContent.readingStories,
   ],
   storeItems: [
     { id: "tablet-15", title: "استخدام الآيباد 15 دقيقة", cost: 15, kind: "screen" },
@@ -81,6 +83,7 @@ export const defaultChildContent: ChildContentConfig = {
   ],
   majorBoxRewards: [50, 75, 100],
   displayBoxRewards: [10, 15],
+  pointRewards: { letterAnswer: 2, numberAnswer: 1, readingStory: 5 },
 };
 
 export type ChildContentValidation = {
@@ -165,6 +168,13 @@ export function validateChildContent(value: unknown): ChildContentValidation {
   if (Math.min(...majorRewards) <= Math.max(...displayRewards)) {
     return { valid: false, error: "كل جائزة كبرى يجب أن تكون أعلى من قيم التحفيز." };
   }
+  const pointRewards = content.pointRewards;
+  if (!pointRewards || typeof pointRewards !== "object"
+    || !Number.isInteger(pointRewards.letterAnswer) || pointRewards.letterAnswer < rules.pointRewardMin || pointRewards.letterAnswer > rules.pointRewardMax
+    || !Number.isInteger(pointRewards.numberAnswer) || pointRewards.numberAnswer < rules.pointRewardMin || pointRewards.numberAnswer > rules.pointRewardMax
+    || !Number.isInteger(pointRewards.readingStory) || pointRewards.readingStory < rules.pointRewardMin || pointRewards.readingStory > rules.pointRewardMax) {
+    return { valid: false, error: "نقاط التعلّم يجب أن تكون أعداداً صحيحة بين 1 و100." };
+  }
   return { valid: true };
 }
 
@@ -234,6 +244,11 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
     storeItems,
     majorBoxRewards: rewards(candidate.majorBoxRewards, defaultChildContent.majorBoxRewards),
     displayBoxRewards: rewards(candidate.displayBoxRewards, defaultChildContent.displayBoxRewards),
+    pointRewards: {
+      letterAnswer: typeof candidate.pointRewards?.letterAnswer === "number" ? Math.min(rules.pointRewardMax, Math.max(rules.pointRewardMin, Math.round(candidate.pointRewards.letterAnswer))) : defaultChildContent.pointRewards.letterAnswer,
+      numberAnswer: typeof candidate.pointRewards?.numberAnswer === "number" ? Math.min(rules.pointRewardMax, Math.max(rules.pointRewardMin, Math.round(candidate.pointRewards.numberAnswer))) : defaultChildContent.pointRewards.numberAnswer,
+      readingStory: typeof candidate.pointRewards?.readingStory === "number" ? Math.min(rules.pointRewardMax, Math.max(rules.pointRewardMin, Math.round(candidate.pointRewards.readingStory))) : defaultChildContent.pointRewards.readingStory,
+    },
   };
   return validateChildContent(normalized).valid ? normalized : structuredClone(defaultChildContent);
 }

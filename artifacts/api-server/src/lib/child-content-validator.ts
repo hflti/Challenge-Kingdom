@@ -26,6 +26,8 @@ type ChildContentRules = {
   storeItemTitleMaxLength: number;
   storeCostMin: number;
   storeCostMax: number;
+  pointRewardMin: number;
+  pointRewardMax: number;
   majorBoxRewardCount: number;
   displayBoxRewardCount: number;
   boxRewardMin: number;
@@ -74,6 +76,7 @@ export function isValidChildContent(value: unknown): value is JsonMap {
   const storeItems = content.storeItems;
   const majorRewards = content.majorBoxRewards;
   const displayRewards = content.displayBoxRewards;
+  const pointRewards = content.pointRewards;
 
   if (!Array.isArray(letterGames) || letterGames.length !== rules.letterGamesCount || !unique(letterGames.map((item) => item && typeof item === "object" ? (item as JsonMap).id : null))) return false;
   for (const raw of letterGames) {
@@ -124,6 +127,11 @@ export function isValidChildContent(value: unknown): value is JsonMap {
       || typeof item.kind !== "string"
       || !rules.rewardKinds.includes(item.kind)) return false;
   }
+  if (!pointRewards || typeof pointRewards !== "object" || Array.isArray(pointRewards)) return false;
+  const points = pointRewards as JsonMap;
+  if (!["letterAnswer", "numberAnswer", "readingStory"].every((key) =>
+    Number.isInteger(points[key]) && (points[key] as number) >= rules.pointRewardMin && (points[key] as number) <= rules.pointRewardMax,
+  )) return false;
 
   const validRewards = (items: unknown, expectedLength: number) =>
     Array.isArray(items) && items.length === expectedLength

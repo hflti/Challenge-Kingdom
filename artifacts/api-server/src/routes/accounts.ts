@@ -41,6 +41,12 @@ function validCode(value: unknown): value is string {
   return typeof value === "string" && value.length >= 4 && value.length <= 64;
 }
 
+function normalizedFamilyUsername(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const username = value.trim();
+  return /^[A-Za-z0-9]{1,64}$/.test(username) ? username.toLowerCase() : null;
+}
+
 function validText(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.trim().length <= maxLength;
 }
@@ -80,12 +86,12 @@ function issueToken(version: number): { token: string; expiresAt: string } {
   return { token: `${payload}.${signature}`, expiresAt: new Date(expiresAtMs).toISOString() };
 }
 
-async function ensureAdminCredential() {
+async function ensureAdminCredential(initialCode: string) {
   let [credential] = await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID));
   if (credential) return credential;
   const [created] = await db.insert(adminCredentialsTable).values({
     id: ADMIN_CREDENTIAL_ID,
-    codeHash: hashCode(randomUUID()),
+    codeHash: hashCode(initialCode),
     credentialVersion: 1,
   }).onConflictDoNothing().returning();
   credential = created ?? (await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID)))[0];
@@ -150,7 +156,7 @@ router.get("/accounts", async (req, res): Promise<void> => {
     const members = await db.select({ familyId: membersTable.familyId }).from(membersTable);
     const counts = new Map<string, number>();
     for (const member of members) counts.set(member.familyId, (counts.get(member.familyId) ?? 0) + 1);
-    res.json({ families: families.map((family) => ({ id: family.id, name: family.name, memberCount: counts.get(family.id) ?? 0 })) });
+    res.json({ families: families.map((family) => ({ id: family.id, name: family.name, username: family.username, memberCount: counts.get(family.id) ?? 0 })) });
     return;
   }
 
@@ -200,12 +206,16 @@ router.get("/accounts", async (req, res): Promise<void> => {
       return;
     }
     const code = req.header("x-family-code");
-    if (!validCode(code)) {
+    const username = normalizedFamilyUsername(req.header("x-family-username"));
+    if (!validCode(code) || !username) {
       failed(req, "family-members");
-      res.status(400).json({ error: "A valid family code is required." });
+      res.status(400).json({ error: "A valid family username and code are required." });
       return;
     }
-    const [family] = await db.select().from(familiesTable).where(eq(familiesTable.familyKey, hashCode(code)));
+    const [family] = await db.select().from(familiesTable).where(and(
+      eq(familiesTable.username, username),
+      eq(familiesTable.familyKey, hashCode(code)),
+    ));
     if (!family) {
       failed(req, "family-members");
       res.status(404).json({ error: "Family not found." });
@@ -231,12 +241,21 @@ router.post("/accounts", async (req, res): Promise<void> => {
     }
     const revealCode = process.env.ADMIN_REVEAL_CODE;
     const submittedCode = typeof body.code === "string" ? body.code.trim() : body.code;
-    if (validCode(revealCode) && validCode(submittedCode) && sameHash(hashCode(submittedCode), hashCode(revealCode))) {
-      const credential = await ensureAdminCredential();
-      if (!credential) {
-        res.status(503).json({ error: "Administrator access is not configured." });
-        return;
-      }
+    let credential = validCode(revealCode) ? await ensureAdminCredential(revealCode) : undefined;
+    const validInitialCode = Boolean(
+      credential
+      && credential.credentialVersion === 1
+      && validCode(revealCode)
+      && validCode(submittedCode)
+      && sameHash(hashCode(submittedCode), hashCode(revealCode)),
+    );
+    const validRotatedCode = Boolean(
+      credential
+      && credential.credentialVersion > 1
+      && validCode(submittedCode)
+      && sameHash(hashCode(submittedCode), credential.codeHash),
+    );
+    if ((validInitialCode || validRotatedCode) && credential) {
       loginAttempts.delete(`admin-reveal:${clientKey(req)}`);
       res.json({ ok: true, ...issueToken(credential.credentialVersion) });
       return;
@@ -252,12 +271,16 @@ router.post("/accounts", async (req, res): Promise<void> => {
       return;
     }
     const familyCode = req.header("x-family-code");
-    if (!validCode(familyCode) || !validText(body.memberId, 128) || !validCode(body.code) || (body.role !== undefined && body.role !== "owner" && body.role !== "child")) {
+    const username = normalizedFamilyUsername(req.header("x-family-username"));
+    if (!validCode(familyCode) || !username || !validText(body.memberId, 128) || !validCode(body.code) || (body.role !== undefined && body.role !== "owner" && body.role !== "child")) {
       failed(req, "verify-member");
       res.status(400).json({ error: "Invalid member verification request." });
       return;
     }
-    const [family] = await db.select().from(familiesTable).where(eq(familiesTable.familyKey, hashCode(familyCode)));
+    const [family] = await db.select().from(familiesTable).where(and(
+      eq(familiesTable.username, username),
+      eq(familiesTable.familyKey, hashCode(familyCode)),
+    ));
     if (!family) {
       failed(req, "verify-member");
       res.status(404).json({ error: "Family not found." });
@@ -279,21 +302,23 @@ router.post("/accounts", async (req, res): Promise<void> => {
       return;
     }
     const familyCode = req.header("x-family-code");
-    if (!validCode(familyCode)) {
+    const username = normalizedFamilyUsername(req.header("x-family-username"));
+    if (!validCode(familyCode) || !username) {
       failed(req, "bootstrap-family");
-      res.status(400).json({ error: "A valid family code is required." });
+      res.status(400).json({ error: "A valid family username and code are required." });
       return;
     }
     const familyKey = hashCode(familyCode);
-    await db.insert(familiesTable).values({ id: randomUUID(), name: "Family", familyKey })
-      .onConflictDoNothing({ target: familiesTable.familyKey });
-    const [family] = await db.select().from(familiesTable).where(eq(familiesTable.familyKey, familyKey));
+    const [family] = await db.select().from(familiesTable).where(and(
+      eq(familiesTable.username, username),
+      eq(familiesTable.familyKey, familyKey),
+    ));
     if (!family) {
       failed(req, "bootstrap-family");
-      res.status(500).json({ error: "Unable to bootstrap family." });
+      res.status(404).json({ error: "Family not found." });
       return;
     }
-    res.status(201).json({ family: { id: family.id, name: family.name } });
+    res.json({ family: { id: family.id, name: family.name } });
     return;
   }
 
@@ -303,8 +328,9 @@ router.post("/accounts", async (req, res): Promise<void> => {
   }
 
   if (action === "admin-create-family") {
-    if (!validText(body.name, 80) || !validCode(body.code)) {
-      res.status(400).json({ error: "A valid kingdom name and code are required." });
+    const username = normalizedFamilyUsername(body.username);
+    if (!validText(body.name, 80) || !validCode(body.code) || !username) {
+      res.status(400).json({ error: "A valid kingdom name, username, and code are required." });
       return;
     }
     const name = body.name.trim();
@@ -312,16 +338,22 @@ router.post("/accounts", async (req, res): Promise<void> => {
     const created = await db.transaction(async (tx) => {
       const [collision] = await tx.select({ id: familiesTable.id }).from(familiesTable).where(eq(familiesTable.familyKey, familyKey));
       if (collision) return "collision" as const;
+      const [usernameCollision] = await tx.select({ id: familiesTable.id }).from(familiesTable).where(eq(familiesTable.username, username));
+      if (usernameCollision) return "username-collision" as const;
       const [stateCollision] = await tx.select({ familyKey: kingdomStatesTable.familyKey }).from(kingdomStatesTable).where(eq(kingdomStatesTable.familyKey, familyKey));
       if (stateCollision) return "collision" as const;
-      const [family] = await tx.insert(familiesTable).values({ id: randomUUID(), name, familyKey }).returning();
+      const [family] = await tx.insert(familiesTable).values({ id: randomUUID(), name, username, familyKey }).returning();
       return family;
     });
     if (created === "collision") {
       res.status(409).json({ error: "That kingdom code is already in use." });
       return;
     }
-    res.status(201).json({ family: { id: created.id, name: created.name } });
+    if (created === "username-collision") {
+      res.status(409).json({ error: "That family username is already in use." });
+      return;
+    }
+    res.status(201).json({ family: { id: created.id, name: created.name, username: created.username } });
     return;
   }
 
@@ -377,6 +409,54 @@ router.post("/accounts", async (req, res): Promise<void> => {
       .returning({ id: familiesTable.id });
     if (!family) {
       res.status(404).json({ error: "Family not found." });
+      return;
+    }
+    res.json({ ok: true });
+    return;
+  }
+
+  if (action === "admin-change-family-username") {
+    const username = normalizedFamilyUsername(body.username);
+    const familyId = validText(body.familyId, 128) ? body.familyId : null;
+    if (!familyId || !username) {
+      res.status(400).json({ error: "A valid family id and username are required." });
+      return;
+    }
+    const changed = await db.transaction(async (tx) => {
+      const [family] = await tx.select({ id: familiesTable.id }).from(familiesTable).where(eq(familiesTable.id, familyId));
+      if (!family) return "missing" as const;
+      const [collision] = await tx.select({ id: familiesTable.id }).from(familiesTable).where(eq(familiesTable.username, username));
+      if (collision && collision.id !== family.id) return "collision" as const;
+      await tx.update(familiesTable).set({ username, updatedAt: new Date() }).where(eq(familiesTable.id, family.id));
+      return "ok" as const;
+    });
+    if (changed === "missing") {
+      res.status(404).json({ error: "Family not found." });
+      return;
+    }
+    if (changed === "collision") {
+      res.status(409).json({ error: "That family username is already in use." });
+      return;
+    }
+    res.json({ ok: true, username });
+    return;
+  }
+
+  if (action === "admin-change-code") {
+    if (!validCode(body.newCode)) {
+      res.status(400).json({ error: "A valid new administrator code is required." });
+      return;
+    }
+    const [credential] = await db.update(adminCredentialsTable)
+      .set({
+        codeHash: hashCode(body.newCode),
+        credentialVersion: sql`${adminCredentialsTable.credentialVersion} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID))
+      .returning();
+    if (!credential) {
+      res.status(503).json({ error: "Administrator access is not configured." });
       return;
     }
     res.json({ ok: true });

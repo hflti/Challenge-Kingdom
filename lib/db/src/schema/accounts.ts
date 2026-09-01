@@ -8,11 +8,17 @@ export const familiesTable = pgTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
+    // Nullable for families created before usernames were required. New writes
+    // store the lower-case normalized username.
+    username: text("username"),
     familyKey: text("family_key").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
   },
-  (table) => [uniqueIndex("families_family_key_unique").on(table.familyKey)],
+  (table) => [
+    uniqueIndex("families_family_key_unique").on(table.familyKey),
+    uniqueIndex("families_username_unique").on(table.username),
+  ],
 );
 
 export const membersTable = pgTable(

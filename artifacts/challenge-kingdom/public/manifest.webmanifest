@@ -1,0 +1,14 @@
+{
+  "name": "مملكة التحديات الدراسية",
+  "short_name": "مملكة التحديات",
+  "description": "رحلة دراسية عائلية ممتعة.",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8f0df",
+  "theme_color": "#ea4b5e",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

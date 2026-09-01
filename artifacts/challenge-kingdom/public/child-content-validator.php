@@ -38,6 +38,7 @@ function isValidChildContent(mixed $value): bool
     $storeItems = $value['storeItems'] ?? null;
     $majorRewards = $value['majorBoxRewards'] ?? null;
     $displayRewards = $value['displayBoxRewards'] ?? null;
+    $pointRewards = $value['pointRewards'] ?? null;
 
     if (!is_array($letterGames) || count($letterGames) !== $rules['letterGamesCount']) return false;
     $letterIds = [];
@@ -96,6 +97,12 @@ function isValidChildContent(mixed $value): bool
         $storeIds[] = $item['id'];
     }
     if (!$unique($storeIds)) return false;
+    if (!is_array($pointRewards)) return false;
+    foreach (['letterAnswer', 'numberAnswer', 'readingStory'] as $key) {
+        if (!is_int($pointRewards[$key] ?? null)
+            || $pointRewards[$key] < $rules['pointRewardMin']
+            || $pointRewards[$key] > $rules['pointRewardMax']) return false;
+    }
 
     $validRewards = static function (mixed $items, int $expectedLength) use ($rules, $unique): bool {
         return is_array($items)

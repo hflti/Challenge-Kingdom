@@ -34,10 +34,12 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
-  const [newFamily, setNewFamily] = useState({ name: "", code: "" });
+  const [newFamily, setNewFamily] = useState({ name: "", username: "", code: "" });
   const [newMember, setNewMember] = useState(emptyMember);
   const [familyCode, setFamilyCode] = useState("");
   const [familyName, setFamilyName] = useState("");
+  const [familyUsername, setFamilyUsername] = useState("");
+  const [adminCode, setAdminCode] = useState("");
   const [memberCode, setMemberCode] = useState<Record<string, string>>({});
   const [showCreateFamily, setShowCreateFamily] = useState(false);
   const [showFamilySettings, setShowFamilySettings] = useState(false);
@@ -89,6 +91,7 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
       const currentFamily = { ...family, name: result.family.name };
       setSelectedFamily(currentFamily);
       setFamilyName(currentFamily.name);
+      setFamilyUsername(currentFamily.username ?? "");
       setMembers(result.members);
       setChildContent(normalizeChildContent(contentResult.content));
       setMemberCode({});
@@ -107,6 +110,7 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
     event.preventDefault();
     if (!token) return;
     const name = newFamily.name.trim();
+    const username = newFamily.username.trim();
     if (!name) {
       setError("اكتب اسم المملكة.");
       return;
@@ -115,11 +119,15 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
       setError("رمز المملكة يجب أن يتكون من 4 إلى 64 حرفاً.");
       return;
     }
+    if (!/^[A-Za-z0-9]{3,64}$/.test(username)) {
+      setError("اسم المستخدم يجب أن يتكون من أحرف إنجليزية وأرقام فقط.");
+      return;
+    }
     beginAction();
     try {
-      const result = await accountsApi.createFamily(token, name, newFamily.code);
+      const result = await accountsApi.createFamily(token, name, username, newFamily.code);
       const created = { ...result.family, memberCount: 0 };
-      setNewFamily({ name: "", code: "" });
+      setNewFamily({ name: "", username: "", code: "" });
       setShowCreateFamily(false);
       setNotice("تم إنشاء المملكة. الخطوة التالية: إضافة ولي الأمر.");
       await loadFamilies(token);
@@ -239,6 +247,47 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
     } catch (cause) {
       showFailure(cause, "تعذر تحديث اسم المملكة.");
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateFamilyUsername = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!token || !selectedFamily) return;
+    const username = familyUsername.trim();
+    if (!/^[A-Za-z0-9]{3,64}$/.test(username)) {
+      setError("اسم المستخدم يجب أن يتكون من أحرف إنجليزية وأرقام فقط.");
+      return;
+    }
+    beginAction();
+    try {
+      await accountsApi.changeFamilyUsername(token, selectedFamily.id, username);
+      const updated = { ...selectedFamily, username: username.toLowerCase() };
+      setSelectedFamily(updated);
+      setFamilies((current) => current.map((family) => family.id === updated.id ? updated : family));
+      setNotice("تم تحديث اسم مستخدم العائلة.");
+    } catch (cause) {
+      showFailure(cause, "تعذر تحديث اسم مستخدم العائلة.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const rotateAdminCode = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!token || !codeIsValid(adminCode)) {
+      setError("رمز الأدمن الجديد يجب أن يتكون من 4 إلى 64 حرفاً.");
+      return;
+    }
+    if (!window.confirm("سيؤدي تغيير رمز الأدمن إلى إنهاء جلسة الإدارة الحالية وإبطال الرمز القديم. هل تريد المتابعة؟")) return;
+    beginAction();
+    try {
+      await accountsApi.changeAdminCode(token, adminCode);
+      setAdminCode("");
+      setToken(null);
+      onClose();
+    } catch (cause) {
+      showFailure(cause, "تعذر تغيير رمز الأدمن.");
       setLoading(false);
     }
   };
@@ -406,6 +455,7 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
           <p className="admin-modal-copy">اكتب اسماً واضحاً للمملكة ورمزاً خاصاً لربط أجهزة الأسرة. لن يُعرض الرمز بعد الحفظ.</p>
           <form onSubmit={createFamily}>
             <label className="admin-field"><span>اسم المملكة</span><input className="admin-input" data-testid="input-new-family-name" maxLength={80} value={newFamily.name} onChange={(event) => setNewFamily({ ...newFamily, name: event.target.value })} placeholder="مثال: مملكة عائلة أحمد" required /></label>
+            <label className="admin-field"><span>اسم مستخدم العائلة</span><input className="admin-input" data-testid="input-new-family-username" dir="ltr" inputMode="text" pattern="[A-Za-z0-9]{3,64}" minLength={3} maxLength={64} value={newFamily.username} onChange={(event) => setNewFamily({ ...newFamily, username: event.target.value.replace(/[^A-Za-z0-9]/g, "") })} placeholder="Family2026" autoComplete="off" required /><small>أحرف إنجليزية وأرقام فقط، ويُستخدم مع رمز المملكة عند الدخول.</small></label>
             <label className="admin-field"><span>رمز المملكة</span><input className="admin-input code-input" data-testid="input-new-family-code" type="password" minLength={4} maxLength={64} value={newFamily.code} onChange={(event) => setNewFamily({ ...newFamily, code: event.target.value })} placeholder="4 أحرف أو أرقام على الأقل" autoComplete="new-password" required /><small>يستخدمه ولي الأمر لربط هواتف وأجهزة الأسرة.</small></label>
             <div className="admin-form-actions"><button className="admin-btn outline-dark" type="button" data-testid="button-cancel-create-family" onClick={() => setShowCreateFamily(false)}>إلغاء</button><button className="admin-btn primary" data-testid="button-submit-create-family" disabled={loading}><Check size={16} /> إنشاء المملكة</button></div>
           </form>
@@ -433,10 +483,20 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
             <h4>اسم المملكة</h4>
             <div className="admin-member-code-row"><input className="admin-input" data-testid="input-family-name" maxLength={80} value={familyName} onChange={(event) => setFamilyName(event.target.value)} required /><button className="admin-btn outline-dark" data-testid="button-save-family-name" disabled={loading}>حفظ الاسم</button></div>
           </form>
+          <form className="admin-settings-block" onSubmit={updateFamilyUsername}>
+            <h4>اسم مستخدم العائلة</h4>
+            <p>أحرف إنجليزية وأرقام فقط. ستحتاج الأسرة إلى الاسم الجديد مع رمزها عند الدخول التالي.</p>
+            <div className="admin-member-code-row"><input className="admin-input" data-testid="input-family-username" dir="ltr" pattern="[A-Za-z0-9]{3,64}" minLength={3} maxLength={64} value={familyUsername} onChange={(event) => setFamilyUsername(event.target.value.replace(/[^A-Za-z0-9]/g, ""))} autoComplete="off" required /><button className="admin-btn outline-dark" data-testid="button-save-family-username" disabled={loading}>حفظ اسم المستخدم</button></div>
+          </form>
           <form className="admin-settings-block" onSubmit={rotateFamilyCode}>
             <h4>رمز المملكة</h4>
             <p>تغييره ينقل التقدم إلى الرمز الجديد ويلغي عمل الرمز القديم.</p>
             <div className="admin-member-code-row"><input className="admin-input code-input" data-testid="input-family-new-code" type="password" minLength={4} maxLength={64} value={familyCode} onChange={(event) => setFamilyCode(event.target.value)} placeholder="الرمز الجديد" autoComplete="new-password" required /><button className="admin-btn outline-dark" data-testid="button-change-family-code" disabled={loading}><KeyRound size={15} /> تغيير الرمز</button></div>
+          </form>
+          <form className="admin-settings-block" onSubmit={rotateAdminCode} autoComplete="off">
+            <h4>رمز دخول الأدمن</h4>
+            <p>هذا هو رمز بوابة «إعادة ضبط» الوحيدة. سيُبطل الرمز القديم وجميع جلسات الأدمن فوراً.</p>
+            <div className="admin-member-code-row"><input className="admin-input code-input" data-testid="input-admin-new-code" type="password" name="admin_new_code" minLength={4} maxLength={64} value={adminCode} onChange={(event) => setAdminCode(event.target.value)} placeholder="رمز الأدمن الجديد" autoComplete="new-password" required /><button className="admin-btn outline-dark" data-testid="button-change-admin-code" disabled={loading}><ShieldCheck size={15} /> تغيير رمز الأدمن</button></div>
           </form>
           <div className="admin-settings-block danger-zone">
             <h4>حذف المملكة نهائياً</h4>
@@ -496,6 +556,16 @@ function ContentEditorFields({ value, onChange }: { value: ChildContentConfig; o
 
   return (
     <div className="content-editor-sections">
+      <details open>
+        <summary>نقاط التعلّم <span>تُمنح لكل إنجاز</span></summary>
+        <div className="content-editor-card learning-point-rewards">
+          <div className="admin-form-row">
+            <label className="admin-field"><span>الإجابة الصحيحة للحروف</span><input className="admin-input" data-testid="input-letter-answer-points" type="number" min={1} max={100} value={value.pointRewards.letterAnswer} onChange={(event) => onChange({ ...value, pointRewards: { ...value.pointRewards, letterAnswer: Number(event.target.value) } })} required /></label>
+            <label className="admin-field"><span>الإجابة الصحيحة للأرقام</span><input className="admin-input" data-testid="input-number-answer-points" type="number" min={1} max={100} value={value.pointRewards.numberAnswer} onChange={(event) => onChange({ ...value, pointRewards: { ...value.pointRewards, numberAnswer: Number(event.target.value) } })} required /></label>
+            <label className="admin-field"><span>إكمال قصة القراءة</span><input className="admin-input" data-testid="input-reading-story-points" type="number" min={1} max={100} value={value.pointRewards.readingStory} onChange={(event) => onChange({ ...value, pointRewards: { ...value.pointRewards, readingStory: Number(event.target.value) } })} required /></label>
+          </div>
+        </div>
+      </details>
       <details open>
         <summary>درب الحروف <span>6 ألعاب</span></summary>
         <div className="content-editor-list">

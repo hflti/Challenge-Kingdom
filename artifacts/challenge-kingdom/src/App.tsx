@@ -45,6 +45,10 @@ import { defaultChildContent, normalizeChildContent, type ChildContentConfig } f
 import { accountsApi, type FamilyMember } from "./lib/account-api";
 
 type ProfileId = string;
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
 type Screen = "choose" | "home" | "quest" | "gate" | "reward";
 type Tab = "quest" | "parent";
 
@@ -138,6 +142,8 @@ type SavedState = {
   childRewards: Record<ProfileId, ChildRewardsState>;
   childContent: ChildContentConfig;
   extraChallenge: ExtraChallengeSettings;
+  /** Preset IDs only: illustrated avatars are never uploaded or stored as bytes. */
+  profileAvatars: Record<ProfileId, string>;
 };
 
 type SavedMission = {
@@ -214,6 +220,18 @@ const pauseRechargeAmountSeconds = 30;
 const timeUpAlertSeconds = 15;
 const timeUpDecisionSeconds = 120;
 const defaultExtraChallenge: ExtraChallengeSettings = { title: "التحدي الإضافي", duration: 10 * 60, rewardPoints: 10 };
+const avatarPresets = [
+  { id: "knight", symbol: "🛡️", label: "الفارس" },
+  { id: "astronaut", symbol: "🚀", label: "رائد الفضاء" },
+  { id: "wizard", symbol: "🧙", label: "الساحر" },
+  { id: "lion", symbol: "🦁", label: "الأسد" },
+  { id: "fox", symbol: "🦊", label: "الثعلب" },
+  { id: "unicorn", symbol: "🦄", label: "وحيد القرن" },
+] as const;
+
+function avatarSymbol(preset: string | undefined, fallback: string) {
+  return avatarPresets.find((item) => item.id === preset)?.symbol ?? fallback;
+}
 const kingdomApiUrl = import.meta.env.VITE_KINGDOM_API_URL?.trim()
   || "/api/kingdom-state";
 const kingdomApiSaveMethod = "PUT";
@@ -227,6 +245,7 @@ function readSavedState(): SavedState {
     childRewards: { ayham: defaultChildRewards, kinan: defaultChildRewards },
     childContent: defaultChildContent,
     extraChallenge: defaultExtraChallenge,
+    profileAvatars: { ayham: "knight", kinan: "astronaut" },
   };
   try {
     const stored = localStorage.getItem(storageKey);
@@ -239,6 +258,7 @@ function readSavedState(): SavedState {
       points: { ...fallback.points, ...(parsed.points ?? {}) },
       customMissions: { ...fallback.customMissions, ...(parsed.customMissions ?? {}) },
       childRewards: Object.fromEntries(Object.entries({ ...fallback.childRewards, ...(parsed.childRewards ?? {}) }).map(([id, value]) => [id, normalizeChildRewards(value)])),
+      profileAvatars: { ...fallback.profileAvatars, ...(parsed.profileAvatars ?? {}) },
       childContent: normalizeChildContent(parsed.childContent),
       extraChallenge: {
         title: typeof parsed.extraChallenge?.title === "string" && parsed.extraChallenge.title.trim() ? parsed.extraChallenge.title.trim() : fallback.extraChallenge.title,
@@ -282,6 +302,7 @@ function toSyncedKingdomState(state: SavedState): SyncedKingdomState {
     childRewards: state.childRewards,
     childContent: state.childContent,
     extraChallenge: state.extraChallenge,
+    profileAvatars: state.profileAvatars,
   };
 }
 
@@ -299,6 +320,7 @@ function normalizeSyncedKingdomState(value: unknown): SyncedKingdomState | null 
     points: Object.fromEntries(Object.entries(candidate.points).map(([id, value]) => [id, typeof value === "number" ? value : 0])),
     customMissions: Object.fromEntries(Object.entries(candidate.customMissions).map(([id, value]) => [id, Array.isArray(value) ? value as SavedMission[] : []])),
     childRewards: Object.fromEntries(Object.entries(candidate.childRewards ?? {}).map(([id, value]) => [id, normalizeChildRewards(value)])),
+    profileAvatars: isProfileRecord(candidate.profileAvatars) ? Object.fromEntries(Object.entries(candidate.profileAvatars).filter(([, preset]) => typeof preset === "string")) : {},
     childContent: normalizeChildContent(candidate.childContent),
     extraChallenge: {
       title: typeof candidate.extraChallenge?.title === "string" && candidate.extraChallenge.title.trim() ? candidate.extraChallenge.title.trim() : defaultExtraChallenge.title,
@@ -644,6 +666,7 @@ function App() {
   const [extraSetupPoints, setExtraSetupPoints] = useState("");
   const [extraSetupError, setExtraSetupError] = useState("");
   const [familyCode, setFamilyCode] = useState("");
+  const [familyUsername, setFamilyUsername] = useState("");
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
@@ -940,7 +963,7 @@ function App() {
     if (!familyCode) { setFamilyMembers([]); return; }
     let cancelled = false;
     setMembersLoading(true); setMembersError("");
-    void accountsApi.familyMembers(familyCode).then((result) => {
+    void accountsApi.familyMembers(familyUsername, familyCode).then((result) => {
       if (!cancelled) {
         setFamilyMembers(result.members);
         setSaved((current) => {
@@ -959,7 +982,7 @@ function App() {
       if (!cancelled) setMembersError(cause instanceof Error ? cause.message : "تعذر تحميل ملفات العائلة.");
     }).finally(() => { if (!cancelled) setMembersLoading(false); });
     return () => { cancelled = true; };
-  }, [familyCode]);
+  }, [familyCode, familyUsername]);
 
   useEffect(() => {
     if (!familyCode || !memberToken || !cloudReadyRef.current) return;
@@ -1017,15 +1040,17 @@ function App() {
     applySoundPreferences(next);
   };
 
-  const connectFamily = async (code: string) => {
+  const connectFamily = async (username: string, code: string) => {
+    const normalizedUsername = username.trim().toLowerCase();
     const normalizedCode = code.trim();
-    await accountsApi.bootstrapFamily(normalizedCode);
+    await accountsApi.bootstrapFamily(normalizedUsername, normalizedCode);
     memberTokenRef.current = null;
     memberRoleRef.current = null;
     setMemberToken(null);
     cloudVersionRef.current = null;
     cloudReadyRef.current = false;
     lastCloudSignatureRef.current = null;
+    setFamilyUsername(normalizedUsername);
     setFamilyCode(normalizedCode);
     setSyncStatus("connecting");
   };
@@ -1237,7 +1262,7 @@ function App() {
     const member = action === "enter" && target ? familyMembers.find((item) => item.id === target && item.role === "child") : owner;
     if (!member) { setProfileAccessError(action === "enter" ? "هذا الملف غير متاح." : "أضف ولي أمر من لوحة الإدارة أولاً."); return; }
     try {
-      const session = await accountsApi.verifyMember(familyCode, member.id, profileAccessCode, action === "enter" ? "child" : "owner");
+      const session = await accountsApi.verifyMember(familyUsername, familyCode, member.id, profileAccessCode, action === "enter" ? "child" : "owner");
       memberTokenRef.current = session.token;
       memberRoleRef.current = session.role;
       setMemberToken(session.token);
@@ -1313,7 +1338,7 @@ function App() {
     if (!lockedMission) return;
     if (!owner) { setUnlockCodeError("أضف ولي أمر من لوحة الإدارة أولاً."); return; }
     try {
-      const session = await accountsApi.verifyMember(familyCode, owner.id, unlockCode, "owner");
+      const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, unlockCode, "owner");
       memberTokenRef.current = session.token; setMemberToken(session.token);
       memberRoleRef.current = session.role;
       void pullCloudState(true);
@@ -1418,7 +1443,7 @@ function App() {
     if (timeUp && (alertSeconds > 0 || graceSeconds <= 0)) return;
     if (!owner) { setFinishCodeError("أضف ولي أمر من لوحة الإدارة أولاً."); return; }
     try {
-      const session = await accountsApi.verifyMember(familyCode, owner.id, finishCode, "owner");
+      const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, finishCode, "owner");
       memberTokenRef.current = session.token; setMemberToken(session.token);
       memberRoleRef.current = session.role;
       void pullCloudState(true);
@@ -1685,7 +1710,7 @@ function App() {
   const resetMap = async (enteredCode: string) => {
     if (!profile || !owner) return false;
     try {
-      const session = await accountsApi.verifyMember(familyCode, owner.id, enteredCode, "owner");
+      const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, enteredCode, "owner");
       memberTokenRef.current = session.token; setMemberToken(session.token);
       memberRoleRef.current = session.role;
       void pullCloudState(true);
@@ -1703,6 +1728,7 @@ function App() {
     memberRoleRef.current = null;
     setMemberToken(null);
     setFamilyCode("");
+    setFamilyUsername("");
     setFamilyMembers([]);
     setMembersError("");
     setSelectedId(null);
@@ -1828,11 +1854,11 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => requestProfileAccess("switch")} />
+              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset } }))} />
             ) : screen === "home" ? (
-               <HomeView profile={activeProfile} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onParent={() => requestProfileAccess("parent")} />
+               <HomeView profile={activeProfile} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
-              <QuestView mission={mission} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
+              <QuestView mission={mission} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onCancelBeforeStart={newChallenge} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
               <GateView answerResult={answerResult} completionChoice={completionChoice} onAnswer={answerMission} onComplete={completeMission} onBack={leaveMission} onCancel={cancelUnfinishedMission} />
             ) : (
@@ -1860,7 +1886,8 @@ function App() {
   );
 }
 
-function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCloseAdmin }: { onConnect: (code: string) => Promise<void>; onAdminReveal: (code: string) => Promise<boolean>; adminToken: string | null; adminOpen: boolean; onCloseAdmin: () => void }) {
+function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCloseAdmin }: { onConnect: (username: string, code: string) => Promise<void>; onAdminReveal: (code: string) => Promise<boolean>; adminToken: string | null; adminOpen: boolean; onCloseAdmin: () => void }) {
+  const [username, setUsername] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [revealOpen, setRevealOpen] = useState(false);
@@ -1869,13 +1896,18 @@ function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCl
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const normalizedUsername = username.trim();
     const normalizedCode = code.trim();
+    if (!/^[A-Za-z0-9]{3,32}$/.test(normalizedUsername)) {
+      setError("اكتب اسم مستخدم للعائلة بالإنجليزية والأرقام فقط (3–32 رمزاً).");
+      return;
+    }
     if (normalizedCode.length < 4 || normalizedCode.length > 64) {
       setError("اكتب رمز عائلة من 4 إلى 64 حرفاً أو رقماً.");
       return;
     }
     try {
-      await onConnect(normalizedCode);
+      await onConnect(normalizedUsername, normalizedCode);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "تعذر تجهيز العائلة. حاول مرة أخرى.");
     }
@@ -1903,10 +1935,12 @@ function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCl
         <div className="brand-mark"><Crown size={24} /></div>
         <div className="eyebrow" style={{ justifyContent: "center" }}>ربط أجهزة العائلة</div>
         <h1 className="display-title">احتفظوا بالمملكة متصلة</h1>
-        <p>أنشئوا رمزاً خاصاً بالعائلة على أول جهاز، ثم أدخلوه نفسه في أي هاتف أو متصفح آخر لتظهر النقاط والمهام والمؤقت كما هي.</p>
-         <form onSubmit={(event) => void submit(event)}>
+        <p>أدخلوا اسم مستخدم العائلة ورمزها في أي هاتف أو متصفح لتظهر النقاط والمهام والمؤقت كما هي.</p>
+         <form autoComplete="off" onSubmit={(event) => void submit(event)}>
+          <label htmlFor="family-username">اسم مستخدم العائلة</label>
+          <input id="family-username" data-testid="input-family-username" type="text" name="family_username" autoComplete="off" inputMode="text" pattern="[A-Za-z0-9]{3,32}" minLength={3} maxLength={32} value={username} onChange={(event) => { setUsername(event.target.value.replace(/[^A-Za-z0-9]/g, "")); setError(""); }} placeholder="Family username" />
           <label htmlFor="family-code">رمز العائلة</label>
-          <input id="family-code" className="code-input" data-testid="input-family-code" type="password" autoComplete="off" minLength={4} maxLength={64} value={code} onChange={(event) => { setCode(event.target.value); setError(""); }} placeholder="مثال: مملكتنا2026" aria-describedby="family-code-note" autoFocus />
+          <input id="family-code" className="code-input" data-testid="input-family-code" type="password" name="family_access_code" autoComplete="new-password" minLength={4} maxLength={64} value={code} onChange={(event) => { setCode(event.target.value); setError(""); }} placeholder="رمز خاص بالعائلة" aria-describedby="family-code-note" autoFocus />
           <span id="family-code-note">لا تشاركوا هذا الرمز خارج العائلة.</span>
           {error && <p className="form-error" data-testid="status-family-code-error">{error}</p>}
           <button className="primary-button gold" type="submit" data-testid="button-connect-family"><KeyRound size={16} /> ربط المملكة</button>
@@ -1915,15 +1949,33 @@ function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCl
            <button className="admin-reveal-trigger" type="button" data-testid="button-open-reveal" aria-expanded={revealOpen} onClick={() => { setRevealOpen((open) => !open); setRevealError(""); }}><Unlock size={16} /> إعادة ضبط</button>
            {revealOpen && <form className="admin-reveal-form" onSubmit={(event) => void submitReveal(event)}>
              <label htmlFor="admin-reveal-code">رمز الدخول</label>
-             <input id="admin-reveal-code" className="code-input" data-testid="input-admin-reveal-code" type="password" autoComplete="off" minLength={4} maxLength={64} value={revealCode} onChange={(event) => { setRevealCode(event.target.value); setRevealError(""); }} autoFocus />
+             <input id="admin-reveal-code" className="code-input" data-testid="input-admin-reveal-code" type="password" name="admin_reveal_code" autoComplete="new-password" minLength={4} maxLength={64} value={revealCode} onChange={(event) => { setRevealCode(event.target.value); setRevealError(""); }} autoFocus />
              {revealError && <p className="form-error" data-testid="status-admin-reveal-error">{revealError}</p>}
              <button className="secondary-button" type="submit" data-testid="button-submit-admin-reveal"><ShieldCheck size={15} /> موافق</button>
            </form>}
          </div>
       </section>
+      <InstallAppButton />
        {adminOpen && adminToken && <div className="admin-backdrop"><AdminConsole initialToken={adminToken} onClose={onCloseAdmin} /></div>}
     </div>
   );
+}
+
+function InstallAppButton() {
+  const [promptEvent, setPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
+  const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  useEffect(() => {
+    const onPrompt = (event: Event) => {
+      event.preventDefault();
+      setPromptEvent(event as BeforeInstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
+  }, []);
+  if (!promptEvent && !isIos) return null;
+  return <div className="pwa-install">
+    {promptEvent ? <button className="outline-button" type="button" onClick={() => { void promptEvent.prompt().then(() => setPromptEvent(null)); }}><Plus size={16} /> تثبيت المملكة على الجهاز</button> : <span>على iPhone/iPad: اضغط مشاركة ثم «إضافة إلى الشاشة الرئيسية» لتثبيت المملكة.</span>}
+  </div>;
 }
 
 function ProfileChooser({
@@ -2006,7 +2058,8 @@ function ProfileAccessGate({
             className="code-input"
             data-testid="input-profile-access-code"
             type="password"
-            autoComplete="off"
+            name="member_access_code"
+            autoComplete="new-password"
             value={code}
              onChange={(event) => onCode(event.target.value)}
             aria-describedby={error ? "profile-access-error" : undefined}
@@ -2025,6 +2078,7 @@ function ProfileAccessGate({
 
 function HomeView({
   profile,
+  avatar,
   completed,
   points,
   childRewards,
@@ -2054,6 +2108,7 @@ function HomeView({
   onParent,
 }: {
   profile: Profile;
+  avatar: string;
   completed: number;
   points: number;
   childRewards: ChildRewardsState;
@@ -2157,7 +2212,7 @@ function HomeView({
             </div>
             <form onSubmit={(event) => { event.preventDefault(); onUnlock(); }}>
               <label htmlFor="extra-challenge-code">رمز ولي الأمر</label>
-              <input id="extra-challenge-code" className="code-input" data-testid="input-extra-challenge-code" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={unlockCode} onChange={(event) => onUnlockCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز فتح التحدي الإضافي" autoFocus />
+              <input id="extra-challenge-code" className="code-input" data-testid="input-extra-challenge-code" type="password" name="extra_challenge_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={unlockCode} onChange={(event) => onUnlockCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز فتح التحدي الإضافي" autoFocus />
               {unlockCodeError && <p className="form-error" data-testid="status-extra-challenge-code-error">{unlockCodeError}</p>}
               <div className="challenge-unlock-actions">
                 <button className="primary-button" type="submit" data-testid="button-unlock-extra-challenge"><KeyRound size={16} /> فتح التحدي</button>
@@ -2202,7 +2257,7 @@ function HomeView({
              {availableMissions.map((item) => {
             const Icon = item.icon;
                 const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={Boolean(activeMission && activeMission.id !== item.id)}>
-                 <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span></div>
+                 <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span><span className="card-avatar" aria-label={`رمز ${profile.name}`}>{avatar}</span></div>
                   <h3>{item.title}</h3><p>{item.description}</p>{item.requiresCode && <span className="locked-mission-label"><LockKeyhole size={12} /> يحتاج رمز ولي الأمر • مكافأة {item.rewardPoints?.toLocaleString("ar-SA")} نقطة</span>}<ArrowLeft className="mission-arrow" size={18} />
                </button>;
                return item.id.startsWith("custom-") ? <div className="mission-card-wrap" key={item.id}>{missionCard}<button type="button" className="delete-mission" aria-label={`حذف مهمة ${item.title}`} data-testid={`button-delete-mission-${item.id}`} onClick={() => onDeleteMission(item.id)}><CircleX size={15} /> حذف</button></div> : missionCard;
@@ -2224,18 +2279,20 @@ function HomeView({
             <div className="map-points-summary"><strong>{points} / {mapTotalPoints}</strong><span>نقطة في خريطة {profile.name}</span><div className="map-points-track"><i style={{ width: `${Math.max(0, Math.min(100, (points / mapTotalPoints) * 100))}%` }} /></div></div>
             {points >= mapFinishPoints && <div className="map-complete">
               <div><strong>فاز {profile.name} بالمرحلة الأخيرة!</strong><span>أدخل رمز القائد لإعادة الرحلة إلى المرحلة الأولى.</span></div>
-              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" autoComplete="off" value={resetCode} onChange={(event) => setResetCode(event.target.value)} aria-label="رمز ولي الأمر لإعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={() => void submitMapReset()}><RotateCcw size={15} /> إعادة الخريطة</button></div>
+              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" name="map_reset_code" autoComplete="new-password" value={resetCode} onChange={(event) => setResetCode(event.target.value)} aria-label="رمز ولي الأمر لإعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={() => void submitMapReset()}><RotateCcw size={15} /> إعادة الخريطة</button></div>
               {resetError && <p className="form-error" data-testid="status-map-reset-error">{resetError}</p>}
             </div>}
         </div>
       </section>
-      <ChildExtras content={childContent} points={points} rewards={childRewards} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} />
+      {/* TODO(main merge): pass profile.name and this preset avatar to ChildExtras when its public props accept child identity. */}
+      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} />
     </>
   );
 }
 
 function QuestView({
   mission,
+  avatar,
   seconds,
   running,
   timeUp,
@@ -2249,6 +2306,7 @@ function QuestView({
   finishCode,
   error,
   onBack,
+  onCancelBeforeStart,
   onStartTimer,
   onPause,
   onResume,
@@ -2260,6 +2318,7 @@ function QuestView({
   onVerifyCode,
 }: {
   mission: Mission;
+  avatar: string;
   seconds: number;
   running: boolean;
   timeUp: boolean;
@@ -2273,6 +2332,7 @@ function QuestView({
   finishCode: string;
   error: string;
   onBack: () => void;
+  onCancelBeforeStart: () => void;
   onStartTimer: () => void;
   onPause: () => void;
   onResume: () => void;
@@ -2295,17 +2355,17 @@ function QuestView({
       <div className="quest-header"><button className="back-button" data-testid="button-back-to-missions" aria-label="العودة للمهام" onClick={onBack}><ArrowLeft size={18} /></button><div><div className="eyebrow">ميدان التحدي</div><p className="subtle">أثبت أن تركيزك أقوى من الملل.</p></div></div>
       <div className="quest-layout">
         <section className="quest-card" data-testid="panel-active-quest">
-          <div className="eyebrow"><Icon size={14} /> المهمة النشطة</div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
+          <div className="eyebrow"><Icon size={14} /> المهمة النشطة <span className="card-avatar quest-avatar" aria-label="رمز البطل">{avatar}</span></div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
            <div className={`timer-shell ${running ? "running" : ""} ${pauseActive ? "paused" : ""} ${alertSeconds > 0 ? "alerting" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{timeUp && alertSeconds === 0 && graceSeconds > 0 ? formatTime(graceSeconds) : formatTime(seconds)}</span><span className="timer-label">{pauseActive ? `استراحة ${formatTime(pauseSeconds)}` : alertSeconds > 0 ? `تنبيه النهاية ${formatTime(alertSeconds)}` : timeUp && graceSeconds > 0 ? "مهلة القرار" : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
            {!finishCodeOpen && <div className="quest-actions">
-               {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume} disabled={resumeWaitSeconds > 0}><Play size={16} /> {resumeWaitSeconds > 0 ? `انتظر ${resumeWaitSeconds} ثوانٍ` : "استئناف التحدي"}</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>}
+               {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume} disabled={resumeWaitSeconds > 0}><Play size={16} /> {resumeWaitSeconds > 0 ? `انتظر ${resumeWaitSeconds} ثوانٍ` : "استئناف التحدي"}</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <><button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>{!timeUp && <button className="outline-button cancel-before-start" type="button" data-testid="button-cancel-before-start" onClick={onCancelBeforeStart}><CircleX size={16} /> إلغاء قبل البدء</button>}</>}
               {!timeUp && canFinishEarly && <button className="outline-button early-finish-button" data-testid="button-finish-early" onClick={onOpenEarlyFinish}><KeyRound size={16} /> إنهاء المهمة الآن</button>}
             </div>}
             {!timeUp ? finishCodeOpen ? (
               <form className="finish-code-box early-finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
                 <strong>إنهاء المهمة قبل انتهاء الوقت</strong>
                 <label htmlFor="finish-code">رمز ولي الأمر</label>
-                <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
+                <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
                 {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
                 <div className="finish-code-actions">
                   <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
@@ -2323,7 +2383,7 @@ function QuestView({
                ) : (
                   <form className="finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
                    <label htmlFor="finish-code">رمز إنهاء المهمة</label>
-                     <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" autoComplete="off" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
+                     <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
                    {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
                     <div className="finish-code-actions">
                       <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
@@ -2434,6 +2494,7 @@ function ParentView({
   onSoundPreferencesChange,
   onSaveExtraChallenge,
   onChooseProfile,
+  onChooseAvatar,
 }: {
   profiles: Profile[];
   saved: SavedState;
@@ -2441,6 +2502,7 @@ function ParentView({
   onSoundPreferencesChange: (preferences: SoundPreferences) => void;
   onSaveExtraChallenge: (title: string, durationMinutes: number, rewardPoints: number) => void;
   onChooseProfile: () => void;
+  onChooseAvatar: (profileId: ProfileId, preset: string) => void;
 }) {
   const total = dynamicProfiles.reduce((sum, item) => sum + (saved.completed[item.id] ?? 0), 0);
   const [extraTitle, setExtraTitle] = useState(saved.extraChallenge.title);
@@ -2472,6 +2534,10 @@ function ParentView({
   return (
     <section className="parent-view">
       <div className="parent-banner"><div><div className="eyebrow">مرصد الوالدين • {getArabicDate()}</div><h1>غرفة القيادة العائلية</h1><p>ملخص لطيف لما أنجزه الأبطال اليوم، من دون تحويل الرحلة إلى جدول درجات.</p></div><div className="parent-total" data-testid="display-family-total"><strong>{total}</strong><span>مهمة في دفتر العائلة</span></div></div>
+      <section className="avatar-picker panel" data-testid="panel-avatar-picker">
+        <h2 className="panel-title">رموز الأبطال</h2><p className="panel-subtitle">اختاروا شخصية مرحة لكل طفل. نحفظ اسم الرمز فقط، لا صوراً مرفوعة.</p>
+        <div className="avatar-picker-children">{dynamicProfiles.map((child) => <div className="avatar-picker-child" key={child.id}><strong>{child.name}</strong><div className="avatar-preset-list">{avatarPresets.map((preset) => <button key={preset.id} type="button" className={`avatar-preset ${saved.profileAvatars[child.id] === preset.id ? "selected" : ""}`} aria-label={`${preset.label} لـ${child.name}`} aria-pressed={saved.profileAvatars[child.id] === preset.id} onClick={() => onChooseAvatar(child.id, preset.id)}><span>{preset.symbol}</span><small>{preset.label}</small></button>)}</div></div>)}</div>
+      </section>
       <div className="parent-grid">
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">نبض الأبطال</h2><p className="panel-subtitle">هذا الأسبوع حتى الآن</p></div><Trophy color="hsl(var(--accent))" /></div><div className="child-progress">
           {dynamicProfiles.length === 0 ? <p className="subtle">لا توجد ملفات أطفال.</p> : dynamicProfiles.map((child) => <div className="child-progress-row" key={child.id}>{child.photo ? <img className="mini-avatar profile-photo" src={child.photo} alt={`صورة ${child.name}`} /> : <span className="mini-avatar">{child.initials}</span>}<div className="child-progress-copy"><strong>{child.name}</strong><span>{saved.completed[child.id] ?? 0} مهام مكتملة • {(saved.points[child.id] ?? 0).toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, ((saved.points[child.id] ?? 0) / mapTotalPoints) * 100)}%` }} /></div></div></div>)}
