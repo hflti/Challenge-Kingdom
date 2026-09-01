@@ -88,10 +88,28 @@ function issueToken(version: number): { token: string; expiresAt: string } {
 
 async function ensureAdminCredential(initialCode: string) {
   let [credential] = await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID));
-  if (credential) return credential;
+  const initialHash = hashCode(initialCode);
+  if (credential) {
+    if (!sameHash(credential.codeHash, initialHash)) {
+      const [rotated] = await db
+        .update(adminCredentialsTable)
+        .set({
+          codeHash: initialHash,
+          credentialVersion: credential.credentialVersion + 1,
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID),
+          eq(adminCredentialsTable.codeHash, credential.codeHash),
+        ))
+        .returning();
+      credential = rotated ?? (await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID)))[0];
+    }
+    return credential;
+  }
   const [created] = await db.insert(adminCredentialsTable).values({
     id: ADMIN_CREDENTIAL_ID,
-    codeHash: hashCode(initialCode),
+    codeHash: initialHash,
     credentialVersion: 1,
   }).onConflictDoNothing().returning();
   credential = created ?? (await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID)))[0];
