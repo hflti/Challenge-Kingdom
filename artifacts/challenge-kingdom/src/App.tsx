@@ -634,6 +634,9 @@ function App() {
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
   const [adminOpen, setAdminOpen] = useState(false);
+  const memberTokenRef = useRef<string | null>(null);
+  const memberRoleRef = useRef<"owner" | "child" | null>(null);
+  const [memberToken, setMemberToken] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<"needs-code" | "connecting" | "synced" | "offline">("needs-code");
   const [answerResult, setAnswerResult] = useState<"yes" | "no" | null>(() => {
     const active = getInitialActiveChallenge();
@@ -665,8 +668,8 @@ function App() {
   }), [familyMembers]);
   const owner = useMemo(() => familyMembers.find((member) => member.role === "owner") ?? null, [familyMembers]);
   const profile = useMemo(() => availableProfiles.find((item) => item.id === selectedId) ?? null, [availableProfiles, selectedId]);
-  const completed = profile ? saved.completed[profile.id] : 0;
-  const points = profile ? saved.points[profile.id] : 0;
+  const completed = profile ? (saved.completed[profile.id] ?? 0) : 0;
+  const points = profile ? (saved.points[profile.id] ?? 0) : 0;
   const profileMissions = useMemo(
     () => [
       ...missions,
@@ -783,10 +786,10 @@ function App() {
   }, [applyActiveChallenge, selectedId]);
 
   const pullCloudState = useCallback(async (force = false, apply = true) => {
-    if (!familyCode) return "missing" as const;
+    if (!familyCode || !memberTokenRef.current) return "missing" as const;
     try {
       const response = await fetch(kingdomApiUrl, {
-        headers: { "x-family-code": familyCode },
+        headers: { "x-family-code": familyCode, Authorization: `Bearer ${memberTokenRef.current}` },
         cache: "no-store",
       });
       if (response.status === 404) return "missing" as const;
@@ -807,7 +810,7 @@ function App() {
   }, [applyCloudState, familyCode]);
 
   const saveCloudState = useCallback(async (keepalive = false) => {
-    if (!familyCode || !cloudReadyRef.current) return;
+    if (!familyCode || !memberTokenRef.current || !cloudReadyRef.current) return;
     if (cloudSaveInFlightRef.current) {
       pendingCloudSaveRef.current = true;
       return;
@@ -818,15 +821,28 @@ function App() {
     try {
       do {
         pendingCloudSaveRef.current = false;
+        const isChildInitialState = memberRoleRef.current === "child" && cloudVersionRef.current === null && selectedId;
+        const stateForSave = isChildInitialState
+          ? {
+              completed: { [selectedId]: savedRef.current.completed[selectedId] ?? 0 },
+              points: { [selectedId]: savedRef.current.points[selectedId] ?? 0 },
+              customMissions: { [selectedId]: savedRef.current.customMissions[selectedId] ?? [] },
+              extraChallenge: defaultExtraChallenge,
+            }
+          : toSyncedKingdomState(savedRef.current);
+        const challengesForSave = isChildInitialState
+          ? (activeChallengesRef.current[selectedId] ? { [selectedId]: activeChallengesRef.current[selectedId] } : {})
+          : activeChallengesRef.current;
         const response = await fetch(kingdomApiUrl, {
           method: kingdomApiSaveMethod,
           headers: {
             "Content-Type": "application/json",
             "x-family-code": familyCode,
+            Authorization: `Bearer ${memberTokenRef.current}`,
           },
           body: JSON.stringify({
-            state: toSyncedKingdomState(savedRef.current),
-            activeChallenges: activeChallengesRef.current,
+            state: stateForSave,
+            activeChallenges: challengesForSave,
             version: cloudVersionRef.current,
             completedProfileId: completedProfileIdRef.current ?? undefined,
             completedChallengeId: completedChallengeIdRef.current ?? undefined,
@@ -881,7 +897,7 @@ function App() {
   }, [familyCode, pullCloudState]);
 
   useEffect(() => {
-    if (!familyCode) {
+    if (!familyCode || !memberToken) {
       cloudReadyRef.current = false;
       lastCloudSignatureRef.current = null;
       return;
@@ -902,7 +918,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [familyCode]);
+  }, [familyCode, memberToken]);
 
   useEffect(() => {
     if (!familyCode) { setFamilyMembers([]); return; }
@@ -911,6 +927,15 @@ function App() {
     void accountsApi.familyMembers(familyCode).then((result) => {
       if (!cancelled) {
         setFamilyMembers(result.members);
+        setSaved((current) => {
+          const next = { ...current, completed: { ...current.completed }, points: { ...current.points }, customMissions: { ...current.customMissions } };
+          result.members.filter((member) => member.role === "child").forEach((member) => {
+            next.completed[member.id] ??= 0;
+            next.points[member.id] ??= 0;
+            next.customMissions[member.id] ??= [];
+          });
+          return next;
+        });
         setSelectedId((current) => result.members.some((member) => member.id === current && member.role === "child") ? current : null);
       }
     }).catch((cause) => {
@@ -920,7 +945,7 @@ function App() {
   }, [familyCode]);
 
   useEffect(() => {
-    if (!familyCode || !cloudReadyRef.current) return;
+    if (!familyCode || !memberToken || !cloudReadyRef.current) return;
     const signature = cloudSyncSignature(saved, activeChallenges);
     if (skipCloudSaveRef.current) {
       skipCloudSaveRef.current = false;
@@ -933,10 +958,10 @@ function App() {
       void saveCloudState();
     }, 700);
     return () => window.clearTimeout(timeout);
-  }, [activeChallenges, familyCode, saved, saveCloudState]);
+  }, [activeChallenges, familyCode, memberToken, saved, saveCloudState]);
 
   useEffect(() => {
-    if (!familyCode) return;
+    if (!familyCode || !memberToken) return;
     const poll = () => {
       if (!document.hidden) void pullCloudState();
     };
@@ -946,16 +971,16 @@ function App() {
       window.clearInterval(interval);
       window.removeEventListener("focus", poll);
     };
-  }, [familyCode, pullCloudState]);
+  }, [familyCode, memberToken, pullCloudState]);
 
   useEffect(() => {
-    if (!familyCode) return;
+    if (!familyCode || !memberToken) return;
     const persistBeforeExit = () => {
       void saveCloudState(true);
     };
     window.addEventListener("pagehide", persistBeforeExit);
     return () => window.removeEventListener("pagehide", persistBeforeExit);
-  }, [familyCode, saveCloudState]);
+  }, [familyCode, memberToken, saveCloudState]);
 
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify({ ...saved, selectedId }));
@@ -975,8 +1000,12 @@ function App() {
     applySoundPreferences(next);
   };
 
-  const connectFamily = (code: string) => {
+  const connectFamily = async (code: string) => {
     const normalizedCode = code.trim();
+    await accountsApi.bootstrapFamily(normalizedCode);
+    memberTokenRef.current = null;
+    memberRoleRef.current = null;
+    setMemberToken(null);
     cloudVersionRef.current = null;
     cloudReadyRef.current = false;
     lastCloudSignatureRef.current = null;
@@ -1166,6 +1195,12 @@ function App() {
   };
 
   const requestProfileAccess = (action: ProfileAccessAction, target: ProfileId | null = null) => {
+    if (action === "enter") {
+      memberTokenRef.current = null;
+      memberRoleRef.current = null;
+      setMemberToken(null);
+      cloudReadyRef.current = false;
+    }
     setProfileAccessAction(action);
     setProfileAccessTarget(target);
     setProfileAccessCode("");
@@ -1185,11 +1220,21 @@ function App() {
     const member = action === "enter" && target ? familyMembers.find((item) => item.id === target && item.role === "child") : owner;
     if (!member) { setProfileAccessError(action === "enter" ? "هذا الملف غير متاح." : "أضف ولي أمر من لوحة الإدارة أولاً."); return; }
     try {
-      await accountsApi.verifyMember(familyCode, member.id, profileAccessCode, action === "enter" ? "child" : "owner");
+      const session = await accountsApi.verifyMember(familyCode, member.id, profileAccessCode, action === "enter" ? "child" : "owner");
+      memberTokenRef.current = session.token;
+      memberRoleRef.current = session.role;
+      setMemberToken(session.token);
       cancelProfileAccess();
       if (action === "enter" && target) chooseProfile(target);
-      else if (action === "switch") setScreen("choose");
+      else if (action === "switch") {
+        setScreen("choose");
+        memberTokenRef.current = null;
+        memberRoleRef.current = null;
+        setMemberToken(null);
+        cloudReadyRef.current = false;
+      }
       else if (action === "parent") { setTab("parent"); setScreen("home"); }
+      if (action !== "switch") void pullCloudState(true);
     } catch {
       setProfileAccessCode(""); setProfileAccessError("الرمز غير صحيح. حاول مرة أخرى.");
     }
@@ -1251,7 +1296,12 @@ function App() {
   const unlockExtraChallenge = async () => {
     if (!lockedMission) return;
     if (!owner) { setUnlockCodeError("أضف ولي أمر من لوحة الإدارة أولاً."); return; }
-    try { await accountsApi.verifyMember(familyCode, owner.id, unlockCode, "owner"); } catch { setUnlockCode(""); setUnlockCodeError("الرمز غير صحيح. اطلب مساعدة ولي الأمر."); return; }
+    try {
+      const session = await accountsApi.verifyMember(familyCode, owner.id, unlockCode, "owner");
+      memberTokenRef.current = session.token; setMemberToken(session.token);
+      memberRoleRef.current = session.role;
+      void pullCloudState(true);
+    } catch { setUnlockCode(""); setUnlockCodeError("الرمز غير صحيح. اطلب مساعدة ولي الأمر."); return; }
     const nextMission = lockedMission;
     setUnlockCode("");
     setUnlockCodeError("");
@@ -1351,7 +1401,12 @@ function App() {
   const verifyFinishCode = async () => {
     if (timeUp && (alertSeconds > 0 || graceSeconds <= 0)) return;
     if (!owner) { setFinishCodeError("أضف ولي أمر من لوحة الإدارة أولاً."); return; }
-    try { await accountsApi.verifyMember(familyCode, owner.id, finishCode, "owner"); } catch { setFinishCode(""); setFinishCodeError("الرمز غير صحيح. حاول مرة أخرى."); return; }
+    try {
+      const session = await accountsApi.verifyMember(familyCode, owner.id, finishCode, "owner");
+      memberTokenRef.current = session.token; setMemberToken(session.token);
+      memberRoleRef.current = session.role;
+      void pullCloudState(true);
+    } catch { setFinishCode(""); setFinishCodeError("الرمز غير صحيح. حاول مرة أخرى."); return; }
     setTimerRunning(false);
     setTimerEndsAt(null);
     setPauseActive(false);
@@ -1554,7 +1609,12 @@ function App() {
 
   const resetMap = async (enteredCode: string) => {
     if (!profile || !owner) return false;
-    try { await accountsApi.verifyMember(familyCode, owner.id, enteredCode, "owner"); } catch { return false; }
+    try {
+      const session = await accountsApi.verifyMember(familyCode, owner.id, enteredCode, "owner");
+      memberTokenRef.current = session.token; setMemberToken(session.token);
+      memberRoleRef.current = session.role;
+      void pullCloudState(true);
+    } catch { return false; }
     setSaved((current) => ({
       ...current,
       completed: { ...current.completed, [profile.id]: 0 },
@@ -1668,18 +1728,22 @@ function App() {
   );
 }
 
-function FamilySyncSetup({ onConnect, onAdmin, adminOpen, onCloseAdmin }: { onConnect: (code: string) => void; onAdmin: () => void; adminOpen: boolean; onCloseAdmin: () => void }) {
+function FamilySyncSetup({ onConnect, onAdmin, adminOpen, onCloseAdmin }: { onConnect: (code: string) => Promise<void>; onAdmin: () => void; adminOpen: boolean; onCloseAdmin: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedCode = code.trim();
     if (normalizedCode.length < 4 || normalizedCode.length > 64) {
       setError("اكتب رمز عائلة من 4 إلى 64 حرفاً أو رقماً.");
       return;
     }
-    onConnect(normalizedCode);
+    try {
+      await onConnect(normalizedCode);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "تعذر تجهيز العائلة. حاول مرة أخرى.");
+    }
   };
 
   return (
@@ -1689,7 +1753,7 @@ function FamilySyncSetup({ onConnect, onAdmin, adminOpen, onCloseAdmin }: { onCo
         <div className="eyebrow" style={{ justifyContent: "center" }}>ربط أجهزة العائلة</div>
         <h1 className="display-title">احتفظوا بالمملكة متصلة</h1>
         <p>أنشئوا رمزاً خاصاً بالعائلة على أول جهاز، ثم أدخلوه نفسه في أي هاتف أو متصفح آخر لتظهر النقاط والمهام والمؤقت كما هي.</p>
-        <form onSubmit={submit}>
+        <form onSubmit={(event) => void submit(event)}>
           <label htmlFor="family-code">رمز العائلة</label>
           <input id="family-code" className="code-input" data-testid="input-family-code" type="password" autoComplete="off" minLength={4} maxLength={64} value={code} onChange={(event) => { setCode(event.target.value); setError(""); }} placeholder="مثال: مملكتنا2026" aria-describedby="family-code-note" autoFocus />
           <span id="family-code-note">لا تشاركوا هذا الرمز خارج العائلة.</span>

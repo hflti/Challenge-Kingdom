@@ -6,14 +6,17 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { KingdomData } from './kingdomData';
-import type { KingdomStateSaveRequestCompletedProfileId } from './kingdomStateSaveRequestCompletedProfileId';
 
 export interface KingdomStateSaveRequest {
   state: KingdomData;
   activeChallenges: KingdomData;
   /** @minimum 1 */
   version: number | null;
-  completedProfileId?: KingdomStateSaveRequestCompletedProfileId;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  completedProfileId?: string;
   /**
      * @minLength 1
      * @maxLength 128

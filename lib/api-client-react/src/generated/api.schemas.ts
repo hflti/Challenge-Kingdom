@@ -19,20 +19,16 @@ export interface KingdomStateResponse {
   updatedAt: string;
 }
 
-export type KingdomStateSaveRequestCompletedProfileId = typeof KingdomStateSaveRequestCompletedProfileId[keyof typeof KingdomStateSaveRequestCompletedProfileId];
-
-
-export const KingdomStateSaveRequestCompletedProfileId = {
-  ayham: 'ayham',
-  kinan: 'kinan',
-} as const;
-
 export interface KingdomStateSaveRequest {
   state: KingdomData;
   activeChallenges: KingdomData;
   /** @minimum 1 */
   version: number | null;
-  completedProfileId?: KingdomStateSaveRequestCompletedProfileId;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  completedProfileId?: string;
   /**
      * @minLength 1
      * @maxLength 128

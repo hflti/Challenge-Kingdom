@@ -50,7 +50,7 @@ function configureCors(array $config): void
         header('Access-Control-Allow-Origin: ' . $allowedOrigin);
         header('Vary: Origin');
         header('Access-Control-Allow-Headers: Content-Type, X-Family-Code, Authorization');
-        header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+        header('Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS');
     }
 }
 
@@ -97,11 +97,16 @@ function connectDatabase(array $config): PDO
             title VARCHAR(128) NULL,
             quote_text VARCHAR(512) NULL,
             color VARCHAR(32) NULL,
+            credential_version INT UNSIGNED NOT NULL DEFAULT 1,
             created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
             CONSTRAINT fk_member_family FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
             INDEX idx_member_family (family_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+    $column = $pdo->query("SHOW COLUMNS FROM family_members LIKE 'credential_version'")->fetch();
+    if (!is_array($column)) {
+        $pdo->exec('ALTER TABLE family_members ADD COLUMN credential_version INT UNSIGNED NOT NULL DEFAULT 1');
+    }
     $pdo->exec(
         'CREATE TABLE IF NOT EXISTS admin_credentials (
             id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
@@ -286,6 +291,17 @@ function throttleLogin(): void
     $hits[] = $now;
     @file_put_contents($file, json_encode($hits), LOCK_EX);
 }
+function throttle(string $scope, int $limit = 5, int $window = 900): void
+{
+    $file = sys_get_temp_dir() . '/kingdom-rate-' . hash('sha256', $scope . '|' . clientIp());
+    $now = time(); $hits = [];
+    if (is_file($file)) {
+        $decoded = json_decode((string)file_get_contents($file), true);
+        if (is_array($decoded)) foreach ($decoded as $hit) if (is_int($hit) && $hit > $now - $window) $hits[] = $hit;
+    }
+    if (count($hits) >= $limit) respond(429, ['error' => 'Too many attempts. Please wait 15 minutes.']);
+    $hits[] = $now; @file_put_contents($file, json_encode($hits), LOCK_EX);
+}
 function base64url(string $value): string { return rtrim(strtr(base64_encode($value), '+/', '-_'), '='); }
 function adminToken(array $credential, array $config): array
 {
@@ -304,6 +320,53 @@ function requireAdmin(PDO $pdo, array $config): void
     $payload = is_string($json) ? json_decode($json, true) : null;
     $credential = $pdo->query('SELECT credential_version FROM admin_credentials WHERE id = 1')->fetch();
     if (!is_array($payload) || !is_array($credential) || !isset($payload['exp'], $payload['cv']) || !is_int($payload['exp']) || !is_int($payload['cv']) || $payload['exp'] < time() || $payload['cv'] !== (int)$credential['credential_version']) respond(401, ['error' => 'Administrator authorization has expired.']);
+}
+function memberToken(array $member, array $config): array
+{
+    $expires = time() + 900;
+    $payload = base64url(encodeJson(['kind' => 'member', 'exp' => $expires, 'familyId' => $member['family_id'], 'memberId' => $member['id'], 'role' => $member['role'], 'cv' => (int)$member['credential_version']]));
+    return ['token' => $payload . '.' . base64url(hash_hmac('sha256', $payload, $config['app_secret'], true)), 'expiresAt' => gmdate('Y-m-d\TH:i:s\Z', $expires)];
+}
+function requireMember(PDO $pdo, array $config, string $familyKey): array
+{
+    $header = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? '');
+    if (!preg_match('/^Bearer ([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/', $header, $match)) respond(401, ['error' => 'Member authorization is required.']);
+    if (!hash_equals(base64url(hash_hmac('sha256', $match[1], $config['app_secret'], true)), $match[2])) respond(401, ['error' => 'Member authorization is invalid.']);
+    $raw = base64_decode(strtr($match[1], '-_', '+/'), true); $token = is_string($raw) ? json_decode($raw, true) : null;
+    if (!is_array($token) || ($token['kind'] ?? null) !== 'member' || !isset($token['exp'], $token['familyId'], $token['memberId'], $token['role'], $token['cv']) || !is_int($token['exp']) || $token['exp'] < time()) respond(401, ['error' => 'Member authorization has expired.']);
+    $q = $pdo->prepare('SELECT m.id,m.family_id,m.role,m.credential_version,f.family_key FROM family_members m JOIN families f ON f.id=m.family_id WHERE m.id=:id');
+    $q->execute(['id' => $token['memberId']]); $member = $q->fetch();
+    if (!is_array($member) || $member['family_id'] !== $token['familyId'] || $member['family_key'] !== $familyKey || $member['role'] !== $token['role'] || (int)$member['credential_version'] !== $token['cv']) respond(401, ['error' => 'Member authorization is invalid.']);
+    return $member;
+}
+function childCanWrite(array $oldState, array $newState, array $oldActive, array $newActive, string $memberId): bool
+{
+    foreach ($oldState as $key => $oldValue) {
+        if (in_array($key, ['points', 'completed', 'customMissions'], true)) continue;
+        if (!array_key_exists($key, $newState) || encodeJson([$newState[$key]]) !== encodeJson([$oldValue])) return false;
+    }
+    foreach ($newState as $key => $_) if (!array_key_exists($key, $oldState) && !in_array($key, ['points', 'completed', 'customMissions'], true)) return false;
+    foreach (['points', 'completed', 'customMissions'] as $key) {
+        $old = is_array($oldState[$key] ?? null) ? $oldState[$key] : []; $new = is_array($newState[$key] ?? null) ? $newState[$key] : [];
+        foreach ($old as $id => $value) if ($id !== $memberId && (!array_key_exists($id, $new) || encodeJson([$new[$id]]) !== encodeJson([$value]))) return false;
+        foreach ($new as $id => $_) if ($id !== $memberId && !array_key_exists($id, $old)) return false;
+    }
+    foreach ($oldActive as $id => $value) if ($id !== $memberId && (!array_key_exists($id, $newActive) || encodeJson([$newActive[$id]]) !== encodeJson([$value]))) return false;
+    foreach ($newActive as $id => $_) if ($id !== $memberId && !array_key_exists($id, $oldActive)) return false;
+    return true;
+}
+function childInitialStateIsScoped(object $state, object $active, string $memberId): bool
+{
+    foreach (get_object_vars($state) as $key => $value) {
+        if (in_array($key, ['points', 'completed', 'customMissions'], true)) {
+            if (!is_object($value)) return false;
+            foreach (get_object_vars($value) as $id => $_) if ($id !== $memberId) return false;
+        } elseif ($value !== null && (!is_object($value) || get_object_vars($value) !== [])) {
+            return false;
+        }
+    }
+    foreach (get_object_vars($active) as $id => $_) if ($id !== $memberId) return false;
+    return true;
 }
 
 $config = readConfig();
@@ -324,8 +387,8 @@ try {
     $action = trim((string)($_GET['action'] ?? ''));
     if ($action !== '') {
         $adminActions = ['admin-families', 'admin-members', 'admin-create-member', 'admin-delete-member', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-code'];
-        if (!in_array($action, ['admin-login', 'family-members', 'verify-member', ...$adminActions], true)) respond(404, ['error' => 'Unknown action.']);
-        if (($action === 'admin-login' || $action === 'verify-member') && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
+        if (!in_array($action, ['admin-login', 'family-members', 'verify-member', 'bootstrap-family', ...$adminActions], true)) respond(404, ['error' => 'Unknown action.']);
+        if (($action === 'admin-login' || $action === 'verify-member' || $action === 'bootstrap-family') && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
         if (in_array($action, ['admin-families', 'admin-members', 'family-members'], true) && $method !== 'GET') respond(405, ['error' => 'Method not allowed.']);
         if (in_array($action, ['admin-create-member', 'admin-delete-member', 'admin-change-member-code', 'admin-change-family-code', 'admin-change-code'], true) && $method !== 'POST') respond(405, ['error' => 'Method not allowed.']);
         if (in_array($action, $adminActions, true) && $action !== 'admin-login') requireAdmin($pdo, $config);
@@ -352,7 +415,7 @@ try {
         if ($action === 'family-members' || $action === 'verify-member') {
             $key = codeHash(familyCodeFromRequest(), $config);
             $q=$pdo->prepare('SELECT id,name FROM families WHERE family_key=:key'); $q->execute(['key'=>$key]); $family=$q->fetch();
-            if (!is_array($family)) respond(404,['error'=>'Family not found.']);
+            if (!is_array($family)) { throttle('family-members'); respond(404,['error'=>'Family not found.']); }
             if ($action === 'family-members') {
                 $q=$pdo->prepare('SELECT id,role,name,grade,title,quote_text,color FROM family_members WHERE family_id=:id ORDER BY created_at');$q->execute(['id'=>$family['id']]);
                 $members=array_map(fn($r)=>['id'=>$r['id'],'role'=>$r['role'],'name'=>$r['name'],'grade'=>$r['grade'],'title'=>$r['title'],'quote'=>$r['quote_text'],'color'=>$r['color']],$q->fetchAll());
@@ -360,9 +423,14 @@ try {
             }
             $data=readJsonBody(); expectPayload($data,['memberId','code'],['role']);
             if (!is_string($data['memberId']) || !is_string($data['code']) || (isset($data['role']) && !in_array($data['role'],['owner','child'],true))) respond(400,['error'=>'Member verification data is invalid.']);
-            $q=$pdo->prepare('SELECT role,code_hash FROM family_members WHERE id=:id AND family_id=:family');$q->execute(['id'=>$data['memberId'],'family'=>$family['id']]);$member=$q->fetch();
-            if (!is_array($member) || (isset($data['role']) && $member['role']!==$data['role']) || !hash_equals($member['code_hash'],codeHash($data['code'],$config))) respond(401,['error'=>'Invalid member code.']);
-            respond(200,['ok'=>true,'role'=>$member['role']]);
+            $q=$pdo->prepare('SELECT id,family_id,role,code_hash,credential_version FROM family_members WHERE id=:id AND family_id=:family');$q->execute(['id'=>$data['memberId'],'family'=>$family['id']]);$member=$q->fetch();
+            if (!is_array($member) || (isset($data['role']) && $member['role']!==$data['role']) || !hash_equals($member['code_hash'],codeHash($data['code'],$config))) { throttle('verify-member'); respond(401,['error'=>'Invalid member code.']); }
+            respond(200,['ok'=>true,'role'=>$member['role'], ...memberToken($member,$config)]);
+        }
+        if ($action === 'bootstrap-family') {
+            $key = codeHash(familyCodeFromRequest(), $config); throttle('bootstrap-family');
+            $pdo->beginTransaction(); $family = ensureFamily($pdo, $key); $pdo->commit();
+            respond(200, ['family' => ['id' => $family['id'], 'name' => $family['name']]]);
         }
         $data = readJsonBody();
         if ($action === 'admin-create-member') {
@@ -378,12 +446,14 @@ try {
         }
         if ($action === 'admin-change-member-code') {
             expectPayload($data,['familyId','memberId','newCode']);$code=validCode($data['newCode']);
-            $q=$pdo->prepare('UPDATE family_members SET code_hash=:hash WHERE id=:member AND family_id=:family');$q->execute(['hash'=>codeHash($code,$config),'member'=>$data['memberId'],'family'=>$data['familyId']]);if($q->rowCount()!==1)respond(404,['error'=>'Member not found.']);respond(200,['ok'=>true]);
+            $q=$pdo->prepare('UPDATE family_members SET code_hash=:hash,credential_version=credential_version+1 WHERE id=:member AND family_id=:family');$q->execute(['hash'=>codeHash($code,$config),'member'=>$data['memberId'],'family'=>$data['familyId']]);if($q->rowCount()!==1)respond(404,['error'=>'Member not found.']);respond(200,['ok'=>true]);
         }
         if ($action === 'admin-change-code') {
             expectPayload($data,['currentCode','newCode']);$new=validCode($data['newCode']);$q=$pdo->query('SELECT code_hash FROM admin_credentials WHERE id=1')->fetch();
             if(!is_array($q)||!is_string($data['currentCode'])||!hash_equals($q['code_hash'],codeHash($data['currentCode'],$config)))respond(401,['error'=>'Invalid administrator code.']);
-            $pdo->prepare('UPDATE admin_credentials SET code_hash=:hash,credential_version=credential_version+1,updated_at=UTC_TIMESTAMP(3) WHERE id=1')->execute(['hash'=>codeHash($new,$config)]);respond(200,['ok'=>true]);
+            $update=$pdo->prepare('UPDATE admin_credentials SET code_hash=:new_hash,credential_version=credential_version+1,updated_at=UTC_TIMESTAMP(3) WHERE id=1 AND code_hash=:old_hash');
+            $update->execute(['new_hash'=>codeHash($new,$config),'old_hash'=>$q['code_hash']]);
+            if($update->rowCount()!==1)respond(409,['error'=>'Administrator credentials changed during this request.']);respond(200,['ok'=>true]);
         }
         if ($action === 'admin-delete-member') {
             expectPayload($data,['familyId','memberId','confirm']);if(($data['confirm']??null)!==true)respond(400,['error'=>'Deletion confirmation is required.']);
@@ -396,8 +466,10 @@ try {
             if($family['family_key']!==$newKey){$state=fetchRecord($pdo,$family['family_key'],true);if(fetchRecord($pdo,$newKey,true)){$pdo->rollBack();respond(409,['error'=>'That family code is already in use.']);}$pdo->prepare('UPDATE families SET family_key=:new WHERE id=:id')->execute(['new'=>$newKey,'id'=>$data['familyId']]);if($state)$pdo->prepare('UPDATE kingdom_states SET family_key=:new WHERE family_key=:old')->execute(['new'=>$newKey,'old'=>$family['family_key']]);}$pdo->commit();respond(200,['ok'=>true]);
         }
     }
+    if ($method !== 'GET' && $method !== 'PUT') respond(405, ['error' => 'Method not allowed.']);
     $familyCode = familyCodeFromRequest();
     $familyKey = hash_hmac('sha256', $familyCode, $config['app_secret']);
+    $memberSession = requireMember($pdo, $config, $familyKey);
 
     if ($method === 'GET') {
         $record = fetchRecord($pdo, $familyKey);
@@ -446,7 +518,8 @@ try {
     $hasCompletion = is_string($completedProfileId) && is_string($completedChallengeId);
     if ($hasCompletion) {
         if (
-            !in_array($completedProfileId, ['ayham', 'kinan'], true)
+            $completedProfileId === ''
+            || strlen($completedProfileId) > 128
             || $completedChallengeId === ''
             || strlen($completedChallengeId) > 128
         ) {
@@ -472,12 +545,32 @@ try {
     $existing = fetchRecord($pdo, $familyKey, true);
 
     if ($existing === null) {
+        if ($memberSession['role'] === 'child' && !childInitialStateIsScoped($payloadObject->state, $payloadObject->activeChallenges, $memberSession['id'])) {
+            $pdo->rollBack();
+            respond(403, ['error' => 'Children may only create their own progress.']);
+        }
         insertRecord($pdo, $familyKey, $data['state'], $data['activeChallenges']);
     } else {
         $existingVersion = (int)$existing['version'];
         if ($data['version'] === null || $existingVersion !== $data['version']) {
             $pdo->rollBack();
             respond(409, ['error' => 'A newer version was saved from another device.']);
+        }
+        if ($memberSession['role'] === 'child') {
+            if ($hasCompletion && $completedProfileId !== $memberSession['id']) {
+                $pdo->rollBack();
+                respond(403, ['error' => 'Children may only complete their own challenges.']);
+            }
+            if (!childCanWrite(
+                decodeStoredJson($existing['state_json']),
+                $data['state'],
+                decodeStoredJson($existing['active_challenges_json']),
+                $data['activeChallenges'],
+                $memberSession['id']
+            )) {
+                $pdo->rollBack();
+                respond(403, ['error' => 'Children may only change their own progress.']);
+            }
         }
 
         if ($hasCompletion) {

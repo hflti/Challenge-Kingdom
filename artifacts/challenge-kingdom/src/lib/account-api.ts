@@ -22,6 +22,12 @@ export type AdminSession = {
   token: string;
   expiresAt: string;
 };
+export type MemberSession = {
+  ok: true;
+  role: MemberRole;
+  token: string;
+  expiresAt: string;
+};
 
 type ApiErrorBody = { error?: string; message?: string };
 
@@ -82,6 +88,8 @@ export const accountsApi = {
     request<unknown>("admin-change-code", { method: "POST", token, body: { currentCode, newCode } }),
   familyMembers: (familyCode: string) =>
     request<{ family: Family; members: FamilyMember[] }>("family-members", { familyCode }),
+  bootstrapFamily: (familyCode: string) =>
+    request<{ family: Family }>("bootstrap-family", { method: "POST", familyCode }),
   verifyMember: (familyCode: string, memberId: string, code: string, role?: MemberRole) =>
-    request<{ ok: true; role: MemberRole }>("verify-member", { method: "POST", familyCode, body: { memberId, code, role } }),
+    request<MemberSession>("verify-member", { method: "POST", familyCode, body: { memberId, code, role } }),
 };

@@ -121,7 +121,8 @@ components:
           nullable: true
         completedProfileId:
           type: string
-          enum: [ayham, kinan]
+          minLength: 1
+          maxLength: 128
         completedChallengeId:
           type: string
           minLength: 1

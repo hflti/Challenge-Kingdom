@@ -8,6 +8,7 @@ import {
   kingdomStatesTable,
   membersTable,
 } from "@workspace/db";
+import { signMemberToken } from "../lib/member-auth";
 
 const router: IRouter = Router();
 const ADMIN_CREDENTIAL_ID = "global";
@@ -71,6 +72,24 @@ function recordLoginFailure(req: Request): void {
     return;
   }
   current.count += 1;
+}
+
+function limited(req: Request, scope: string): boolean {
+  const key = `${scope}:${clientKey(req)}`;
+  const attempt = loginAttempts.get(key);
+  if (!attempt) return false;
+  if (attempt.resetAt <= Date.now()) {
+    loginAttempts.delete(key);
+    return false;
+  }
+  return attempt.count >= LOGIN_MAX_FAILURES;
+}
+
+function failed(req: Request, scope: string): void {
+  const key = `${scope}:${clientKey(req)}`;
+  const current = loginAttempts.get(key);
+  if (!current || current.resetAt <= Date.now()) loginAttempts.set(key, { count: 1, resetAt: Date.now() + LOGIN_WINDOW_MS });
+  else current.count += 1;
 }
 
 function issueToken(version: number): { token: string; expiresAt: string } {
@@ -163,13 +182,19 @@ router.get("/accounts", async (req, res): Promise<void> => {
   }
 
   if (action === "family-members") {
+    if (limited(req, "family-members")) {
+      res.status(429).json({ error: "Too many failed attempts. Please try again later." });
+      return;
+    }
     const code = req.header("x-family-code");
     if (!validCode(code)) {
+      failed(req, "family-members");
       res.status(400).json({ error: "A valid family code is required." });
       return;
     }
     const [family] = await db.select().from(familiesTable).where(eq(familiesTable.familyKey, hashCode(code)));
     if (!family) {
+      failed(req, "family-members");
       res.status(404).json({ error: "Family not found." });
       return;
     }
@@ -222,22 +247,53 @@ router.post("/accounts", async (req, res): Promise<void> => {
   }
 
   if (action === "verify-member") {
+    if (limited(req, "verify-member")) {
+      res.status(429).json({ error: "Too many failed attempts. Please try again later." });
+      return;
+    }
     const familyCode = req.header("x-family-code");
     if (!validCode(familyCode) || !validText(body.memberId, 128) || !validCode(body.code) || (body.role !== undefined && body.role !== "owner" && body.role !== "child")) {
+      failed(req, "verify-member");
       res.status(400).json({ error: "Invalid member verification request." });
       return;
     }
     const [family] = await db.select().from(familiesTable).where(eq(familiesTable.familyKey, hashCode(familyCode)));
     if (!family) {
+      failed(req, "verify-member");
       res.status(404).json({ error: "Family not found." });
       return;
     }
     const [member] = await db.select().from(membersTable).where(and(eq(membersTable.id, body.memberId), eq(membersTable.familyId, family.id)));
     if (!member || (body.role !== undefined && member.role !== body.role) || !sameHash(hashCode(body.code), member.codeHash)) {
+      failed(req, "verify-member");
       res.status(401).json({ error: "Invalid member credentials." });
       return;
     }
-    res.json({ ok: true, role: member.role });
+    res.json({ ok: true, role: member.role, ...signMemberToken(member) });
+    return;
+  }
+
+  if (action === "bootstrap-family") {
+    if (limited(req, "bootstrap-family")) {
+      res.status(429).json({ error: "Too many failed attempts. Please try again later." });
+      return;
+    }
+    const familyCode = req.header("x-family-code");
+    if (!validCode(familyCode)) {
+      failed(req, "bootstrap-family");
+      res.status(400).json({ error: "A valid family code is required." });
+      return;
+    }
+    const familyKey = hashCode(familyCode);
+    await db.insert(familiesTable).values({ id: randomUUID(), name: "Family", familyKey })
+      .onConflictDoNothing({ target: familiesTable.familyKey });
+    const [family] = await db.select().from(familiesTable).where(eq(familiesTable.familyKey, familyKey));
+    if (!family) {
+      failed(req, "bootstrap-family");
+      res.status(500).json({ error: "Unable to bootstrap family." });
+      return;
+    }
+    res.status(201).json({ family: { id: family.id, name: family.name } });
     return;
   }
 
@@ -300,7 +356,7 @@ router.post("/accounts", async (req, res): Promise<void> => {
     const familyId = body.familyId;
     const memberId = body.memberId;
     const newCode = body.newCode;
-    const [member] = await db.update(membersTable).set({ codeHash: hashCode(newCode), updatedAt: new Date() })
+    const [member] = await db.update(membersTable).set({ codeHash: hashCode(newCode), credentialVersion: sql`${membersTable.credentialVersion} + 1`, updatedAt: new Date() })
       .where(and(eq(membersTable.id, memberId), eq(membersTable.familyId, familyId))).returning();
     if (!member) {
       res.status(404).json({ error: "Member not found." });
@@ -324,7 +380,7 @@ router.post("/accounts", async (req, res): Promise<void> => {
       const [state] = await tx.select().from(kingdomStatesTable).where(eq(kingdomStatesTable.familyKey, family.familyKey));
       if (state) {
         const stateData = state.state as JsonMap;
-        await tx.update(kingdomStatesTable).set({
+        const [updatedState] = await tx.update(kingdomStatesTable).set({
           state: {
             ...stateData,
             points: omitMemberProgress((stateData.points ?? {}) as JsonMap, member.id),
@@ -334,11 +390,19 @@ router.post("/accounts", async (req, res): Promise<void> => {
           activeChallenges: omitMemberProgress(state.activeChallenges as JsonMap, member.id),
           version: sql`${kingdomStatesTable.version} + 1`,
           updatedAt: new Date(),
-        }).where(eq(kingdomStatesTable.familyKey, family.familyKey));
+        }).where(and(
+          eq(kingdomStatesTable.familyKey, family.familyKey),
+          eq(kingdomStatesTable.version, state.version),
+        )).returning();
+        if (!updatedState) return "conflict" as const;
       }
       await tx.delete(membersTable).where(eq(membersTable.id, member.id));
       return true;
     });
+    if (deleted === "conflict") {
+      res.status(409).json({ error: "The family state changed concurrently. Please retry deletion." });
+      return;
+    }
     if (!deleted) {
       res.status(404).json({ error: "Member not found." });
       return;
@@ -383,16 +447,26 @@ router.post("/accounts", async (req, res): Promise<void> => {
       res.status(400).json({ error: "Administrator codes must be 4 to 64 characters." });
       return;
     }
-    const [credential] = await db.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID));
-    if (!credential || !sameHash(hashCode(body.currentCode), credential.codeHash)) {
+    const currentCode = body.currentCode;
+    const newCode = body.newCode;
+    const rotated = await db.transaction(async (tx) => {
+      const [credential] = await tx.select().from(adminCredentialsTable).where(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID));
+      if (!credential || !sameHash(hashCode(currentCode), credential.codeHash)) return "invalid" as const;
+      const [updated] = await tx.update(adminCredentialsTable).set({
+        codeHash: hashCode(newCode),
+        credentialVersion: sql`${adminCredentialsTable.credentialVersion} + 1`,
+        updatedAt: new Date(),
+      }).where(and(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID), eq(adminCredentialsTable.credentialVersion, credential.credentialVersion))).returning();
+      return updated ? "ok" as const : "conflict" as const;
+    });
+    if (rotated === "invalid") {
       res.status(401).json({ error: "The current administrator code is incorrect." });
       return;
     }
-    await db.update(adminCredentialsTable).set({
-      codeHash: hashCode(body.newCode),
-      credentialVersion: sql`${adminCredentialsTable.credentialVersion} + 1`,
-      updatedAt: new Date(),
-    }).where(and(eq(adminCredentialsTable.id, ADMIN_CREDENTIAL_ID), eq(adminCredentialsTable.credentialVersion, credential.credentialVersion)));
+    if (rotated === "conflict") {
+      res.status(409).json({ error: "The administrator code was changed concurrently. Please retry." });
+      return;
+    }
     res.json({ ok: true });
     return;
   }

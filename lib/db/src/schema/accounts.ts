@@ -23,6 +23,7 @@ export const membersTable = pgTable(
     role: text("role").notNull(),
     name: text("name").notNull(),
     codeHash: text("code_hash").notNull(),
+    credentialVersion: integer("credential_version").notNull().default(1),
     grade: text("grade"),
     title: text("title"),
     quote: text("quote"),

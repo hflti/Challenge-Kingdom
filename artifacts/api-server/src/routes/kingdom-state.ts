@@ -1,7 +1,9 @@
 import { createHmac, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { and, eq, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { db, familiesTable, kingdomStatesTable } from "@workspace/db";
+import { memberFromRequest } from "../lib/member-auth";
 import {
   GetKingdomStateResponse,
   SaveKingdomStateBody,
@@ -36,11 +38,57 @@ async function ensureFamilyForState(familyKey: string): Promise<void> {
     .onConflictDoNothing({ target: familiesTable.familyKey });
 }
 
+function withoutMember(map: KingdomData, memberId: string): KingdomData {
+  const copy = { ...map };
+  delete copy[memberId];
+  return copy;
+}
+
+function emptyDefault(value: unknown): boolean {
+  return value == null || (typeof value === "object" && !Array.isArray(value) && Object.keys(value as KingdomData).length === 0);
+}
+
+function childMayWrite(
+  existing: typeof kingdomStatesTable.$inferSelect | undefined,
+  state: KingdomData,
+  activeChallenges: KingdomData,
+  memberId: string,
+): boolean {
+  if (!existing) {
+    for (const [key, value] of Object.entries(state)) {
+      if (key === "points" || key === "completed" || key === "customMissions") {
+        if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value as KingdomData).some((profileId) => profileId !== memberId)) return false;
+      } else if (!emptyDefault(value)) return false;
+    }
+    return Object.keys(activeChallenges).every((profileId) => profileId === memberId);
+  }
+  const oldState = existing.state as KingdomData;
+  const incomingRest = { ...state };
+  const existingRest = { ...oldState };
+  for (const key of ["points", "completed", "customMissions"]) {
+    const incomingMap = (incomingRest[key] ?? {}) as KingdomData;
+    const oldMap = (existingRest[key] ?? {}) as KingdomData;
+    if (!isDeepStrictEqual(withoutMember(incomingMap, memberId), withoutMember(oldMap, memberId))) return false;
+    delete incomingRest[key];
+    delete existingRest[key];
+  }
+  return isDeepStrictEqual(incomingRest, existingRest)
+    && isDeepStrictEqual(
+      withoutMember(activeChallenges, memberId),
+      withoutMember(existing.activeChallenges as KingdomData, memberId),
+    );
+}
+
 router.get("/kingdom-state", async (req, res): Promise<void> => {
   res.set("Cache-Control", "no-store");
   const familyKey = familyKeyFromRequest(req.header("x-family-code"));
   if (!familyKey) {
     res.status(400).json({ error: "A valid family code is required." });
+    return;
+  }
+  const member = await memberFromRequest(req, familyKey);
+  if (!member) {
+    res.status(401).json({ error: "A valid member authorization token is required." });
     return;
   }
 
@@ -71,6 +119,11 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
     res.status(400).json({ error: "A valid family code is required." });
     return;
   }
+  const member = await memberFromRequest(req, familyKey);
+  if (!member) {
+    res.status(401).json({ error: "A valid member authorization token is required." });
+    return;
+  }
 
   const parsed = SaveKingdomStateBody.safeParse(req.body);
   if (!parsed.success) {
@@ -83,6 +136,17 @@ router.put("/kingdom-state", async (req, res): Promise<void> => {
   if (Boolean(data.completedProfileId) !== Boolean(data.completedChallengeId)) {
     res.status(400).json({ error: "Completion requires both profile and challenge identifiers." });
     return;
+  }
+  if (member.role === "child" && data.completedProfileId && data.completedProfileId !== member.id) {
+    res.status(403).json({ error: "Children may only complete their own challenges." });
+    return;
+  }
+  if (member.role === "child") {
+    const [current] = await db.select().from(kingdomStatesTable).where(eq(kingdomStatesTable.familyKey, familyKey));
+    if (!childMayWrite(current, data.state as KingdomData, data.activeChallenges as KingdomData, member.id)) {
+      res.status(403).json({ error: "Children may only change their own progress and challenge." });
+      return;
+    }
   }
 
   if (data.completedProfileId && data.completedChallengeId) {

@@ -53,6 +53,8 @@ export const SaveKingdomStateHeader = zod.object({
 })
 
 
+export const saveKingdomStateBodyCompletedProfileIdMax = 128;
+
 export const saveKingdomStateBodyCompletedChallengeIdMax = 128;
 
 export const saveKingdomStateBodyCompletionBaseCompletedMin = 0;
@@ -70,7 +72,7 @@ export const SaveKingdomStateBody = zod.object({
   "state": zod.record(zod.string(), zod.unknown()),
   "activeChallenges": zod.record(zod.string(), zod.unknown()),
   "version": zod.number().min(1).nullable(),
-  "completedProfileId": zod.enum(['ayham', 'kinan']).optional(),
+  "completedProfileId": zod.string().min(1).max(saveKingdomStateBodyCompletedProfileIdMax).optional(),
   "completedChallengeId": zod.string().min(1).max(saveKingdomStateBodyCompletedChallengeIdMax).optional(),
   "completionBasePoints": zod.number().optional(),
   "completionBaseCompleted": zod.number().min(saveKingdomStateBodyCompletionBaseCompletedMin).multipleOf(saveKingdomStateBodyCompletionBaseCompletedMultipleOf).optional(),

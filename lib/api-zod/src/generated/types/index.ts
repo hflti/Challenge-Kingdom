@@ -12,4 +12,3 @@ export * from './healthStatus';
 export * from './kingdomData';
 export * from './kingdomStateResponse';
 export * from './kingdomStateSaveRequest';
-export * from './kingdomStateSaveRequestCompletedProfileId';
