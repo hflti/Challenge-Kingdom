@@ -214,22 +214,34 @@ async function resizeImageForUpload(file: File): Promise<File> {
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
     throw new Error("اختر صورة بصيغة JPG أو PNG أو WebP.");
   }
-  const absoluteLimit = 50 * 1024 * 1024;
+  const absoluteLimit = 50 * 1024;
   const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
   const context = canvas.getContext("2d");
   if (!context) {
     bitmap.close();
     throw new Error("تعذر تجهيز الصورة.");
   }
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.84));
-  if (!blob || blob.size >= absoluteLimit) throw new Error("تعذر تصغير الصورة إلى أقل من 50 ميجابايت.");
-  return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.webp`, { type: "image/webp" });
+  let scale = Math.min(1, 1400 / Math.max(bitmap.width, bitmap.height));
+  const qualities = [0.82, 0.68, 0.54, 0.4, 0.28, 0.18];
+  try {
+    for (let attempt = 0; attempt < 7; attempt += 1) {
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      for (const quality of qualities) {
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+        if (blob && blob.size < absoluteLimit) {
+          return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.webp`, { type: "image/webp" });
+        }
+      }
+      scale *= 0.72;
+    }
+  } finally {
+    bitmap.close();
+  }
+  throw new Error("تعذر تصغير الصورة إلى أقل من 50 كيلوبايت.");
 }
 const kingdomApiUrl = import.meta.env.VITE_KINGDOM_API_URL?.trim()
   || "/api/kingdom-state";

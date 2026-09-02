@@ -6,7 +6,7 @@ import { memberFromRequest } from "../lib/member-auth";
 const router: IRouter = Router();
 const sidecarEndpoint = "http://127.0.0.1:1106";
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
-const maxImageBytes = 50 * 1024 * 1024;
+const maxImageBytes = 50 * 1024;
 
 function familyKeyFromCode(code: string): string {
   const secret = process.env.SESSION_SECRET;
@@ -56,7 +56,7 @@ router.post("/storage/profile-images/request-url", async (req, res) => {
     return;
   }
   if (!Number.isInteger(size) || Number(size) < 1 || Number(size) > maxImageBytes || typeof contentType !== "string" || !allowedTypes.has(contentType)) {
-    res.status(400).json({ error: "Choose a JPG, PNG, or WebP image smaller than 50 MB." });
+    res.status(400).json({ error: "Choose a JPG, PNG, or WebP image smaller than 50 KB." });
     return;
   }
   try {
@@ -105,7 +105,7 @@ router.post("/storage/reward-images/request-url", async (req, res) => {
     return;
   }
   if (!Number.isInteger(size) || Number(size) < 1 || Number(size) > maxImageBytes || typeof contentType !== "string" || !allowedTypes.has(contentType)) {
-    res.status(400).json({ error: "Choose a JPG, PNG, or WebP image smaller than 50 MB." });
+    res.status(400).json({ error: "Choose a JPG, PNG, or WebP image smaller than 50 KB." });
     return;
   }
   try {
