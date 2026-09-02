@@ -20,6 +20,7 @@ export function normalizeChildRewards(value: unknown): ChildRewardsState {
 }
 
 type Panel = "games" | "reading" | "store" | "badges";
+type GiftStage = "closed" | "revealed" | "shuffling" | "ready";
 
 function Avatar({ value, name }: { value: string; name: string }) {
   return value.startsWith("/api/") || value.startsWith("http") ? <img className="avatar-photo" src={value} alt={name} /> : <>{value}</>;
@@ -67,8 +68,28 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
   const [storyFinishSubmitting, setStoryFinishSubmitting] = useState(false);
   const [storyApproval, setStoryApproval] = useState<"pending" | "no" | "yes" | null>(null);
   const [boxNotice, setBoxNotice] = useState("");
+  const [giftStage, setGiftStage] = useState<GiftStage>("closed");
+  const [giftOrder, setGiftOrder] = useState([0, 1, 2]);
   const readerRef = useRef<HTMLDivElement>(null);
   const readerPositionRef = useRef(0);
+  const giftShuffleTimerRef = useRef<number | null>(null);
+  const giftOrderRef = useRef([0, 1, 2]);
+
+  const clearGiftShuffle = () => {
+    if (giftShuffleTimerRef.current !== null) {
+      window.clearInterval(giftShuffleTimerRef.current);
+      giftShuffleTimerRef.current = null;
+    }
+  };
+
+  const randomGiftOrder = () => {
+    const next = [0, 1, 2].sort(() => Math.random() - 0.5);
+    if (next.every((value, index) => value === giftOrderRef.current[index])) {
+      [next[0], next[1]] = [next[1], next[0]];
+    }
+    giftOrderRef.current = next;
+    return next;
+  };
 
   const resetStory = () => {
     if ("speechSynthesis" in window) speechSynthesis.cancel();
@@ -84,8 +105,10 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
   };
 
   const openPanel = (next: Panel) => {
+    clearGiftShuffle();
     setPanel(next);
     setBoxNotice("");
+    setGiftStage("closed");
     setGameMessage("");
     setAnswered(false);
     setStoryIndex(null);
@@ -162,6 +185,17 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
     return () => window.clearInterval(interval);
   }, [storyPauseCooldownEndsAt, storyPauseEndsAt]);
 
+  useEffect(() => {
+    if (rewards.badgeCount >= 3) {
+      setGiftStage("closed");
+      setGiftOrder(randomGiftOrder());
+    } else {
+      clearGiftShuffle();
+      setGiftStage("closed");
+    }
+    return clearGiftShuffle;
+  }, [rewards.badgeCount]);
+
   const pauseStory = () => {
     if (storyIndex === null || storyPaused || storyFinished || storyPauseCooldownRemaining > 0) return;
     const now = Date.now();
@@ -222,10 +256,33 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
     setAnswered(false);
   };
 
+  const revealGifts = () => {
+    if (rewards.badgeCount < 3 || content.majorBoxRewards.length !== 3) return;
+    clearGiftShuffle();
+    setGiftOrder(randomGiftOrder());
+    setGiftStage("revealed");
+  };
+
+  const startGiftShuffle = () => {
+    if (giftStage !== "revealed") return;
+    clearGiftShuffle();
+    setGiftStage("shuffling");
+    let ticks = 0;
+    giftShuffleTimerRef.current = window.setInterval(() => {
+      setGiftOrder(randomGiftOrder());
+      ticks += 1;
+      if (ticks >= 18) {
+        clearGiftShuffle();
+        setGiftStage("ready");
+      }
+    }, 65);
+  };
+
   const chooseRandomGift = (boxIndex: number) => {
-    if (content.majorBoxRewards.length !== 3) return;
+    if (giftStage !== "ready" || content.majorBoxRewards.length !== 3) return;
     const reward = content.majorBoxRewards[Math.floor(Math.random() * content.majorBoxRewards.length)];
     setBoxNotice(`مبارك! هديتك هي ${reward.toLocaleString("ar-SA")} ريال.`);
+    setGiftStage("closed");
     onSelectGift(reward, boxIndex);
   };
 
@@ -266,7 +323,7 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
   const modal = panel ? createPortal(
     <div className="child-extras-overlay" role="presentation">
       <section className="child-extras-modal" role="dialog" aria-modal="true">
-        <button className="child-extras-close" aria-label="إغلاق" onClick={() => setPanel(null)}><X /></button>
+        <button className="child-extras-close" aria-label="إغلاق" onClick={() => { clearGiftShuffle(); setPanel(null); }}><X /></button>
         {panel === "games" && (() => {
           const letterGame = content.letterGames[gameIndex % Math.max(1, content.letterGames.length)];
           const numberGame = content.numberQuestions[gameIndex % Math.max(1, content.numberQuestions.length)];
@@ -284,7 +341,7 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
             {storyIndex === null ? <div className="story-grid">{content.readingStories.map((story, index) => <button key={story.id} onClick={() => selectStory(index)}><strong>{story.title}</strong><span>اختر الوقت والنقاط ثم ابدأها كتحدٍ كامل.</span></button>)}</div> : <div className="story-challenge-setup"><BookOpen size={34} /><div className="eyebrow" style={{ justifyContent: "center" }}>تجهيز تحدّي القراءة</div><h3>{content.readingStories[storyIndex]?.title}</h3><p>ستظهر القصة داخل ميدان التحدي مع المؤقت والإيقاف والتمديد والإنهاء والخصومات نفسها.</p><div className="story-setup-fields"><label><span>مدة التحدي بالدقائق</span><input data-testid="input-story-duration" type="number" min="1" max="120" step="1" value={storyMinutes} onChange={(event) => { setStoryMinutes(event.target.value); setStorySetupError(""); }} /></label><label><span>نقاط التحدي</span><input data-testid="input-story-points" type="number" min="1" max="50" step="1" value={storyPoints} onChange={(event) => { setStoryPoints(event.target.value); setStorySetupError(""); }} /></label></div>{storySetupError && <p className="form-error">{storySetupError}</p>}<div className="story-setup-actions"><button className="primary-button gold" data-testid="button-start-story-challenge" onClick={startStoryChallenge}><Play size={16} /> بدء تحدّي القصة</button><button className="outline-button" onClick={() => setStoryIndex(null)}>اختيار قصة أخرى</button></div></div>}
         </div>}
               {panel === "store" && <div><div className="extras-modal-heading"><ShoppingBag size={25} /><div><div className="eyebrow">متجر المكافآت</div><h2>ماذا تشتري بنقاطك؟</h2></div><strong className="store-balance">{points} نقطة</strong></div><div className="store-items-grid">{content.storeItems.map((item) => { const Icon = rewardIcon(item); const purchased = rewards.purchasedIds.includes(item.id); return <div className={`store-item ${purchased ? "purchased" : ""}`} key={item.id}><span className="store-child-avatar"><Avatar value={childAvatar} name={childName} /></span><span className="store-item-icon">{item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Icon size={19} />}</span><strong>{item.title}</strong><span className="store-cost">{item.cost} نقطة</span><button className={purchased ? "outline-button" : "primary-button gold"} disabled={purchased || points < item.cost} onClick={() => { if (onSpend(item.cost, item.id)) setBoxNotice(`تم طلب ${item.title}.`); }}>{purchased ? <><Check size={14} /> تم الطلب</> : "استبدال"}</button></div>; })}</div>{boxNotice && <p className="game-message">{boxNotice}</p>}</div>}
-        {panel === "badges" && <div><div className="extras-modal-heading"><Award size={25} /><div><div className="eyebrow">مراحل الأوسمة الثلاث</div><h2>تقدم {childName}</h2></div></div>{boxNotice && <p className="game-message gift-result-message">{boxNotice}</p>}<div className="badge-progress-summary"><strong>{rewards.badgeCount >= 3 ? "اكتملت المراحل الثلاث" : `المرحلة ${rewards.badgeCount + 1} • ${rewards.challengePoints.toLocaleString("ar-SA")} / 120 نقطة`}</strong><span>كل 120 نقطة من التحديات تفتح وساماً واحداً وتُخصم عند فتحه.</span><div className="badge-track"><i style={{ width: `${rewards.badgeCount >= 3 ? 100 : Math.min(100, (rewards.challengePoints / 120) * 100)}%` }} /></div></div><div className="badge-stages">{[{ title: "وسام البداية", note: "أول وصول إلى 120 نقطة في التحديات" }, { title: "وسام التقدم", note: "ثاني وصول إلى 120 نقطة في التحديات" }, { title: "وسام البطولة", note: "ثالث وصول إلى 120 نقطة في التحديات" }].map((stage, index) => { const opened = rewards.badgeCount > index; const enoughChallengePoints = rewards.challengePoints >= 120; const enoughBalance = points >= 120; const available = rewards.badgeCount === index && enoughChallengePoints && enoughBalance; const current = !opened && rewards.badgeCount === index; const stagePoints = opened ? 120 : current ? Math.min(120, rewards.challengePoints) : 0; return <article className={`badge-stage ${opened ? "earned" : available ? "current" : ""}`} key={stage.title}><span className="badge-stage-medal"><Award size={30} /></span><small>المرحلة {index + 1}</small><strong>{stage.title}</strong><p>{stage.note}</p><div className="badge-track"><i style={{ width: `${(stagePoints / 120) * 100}%` }} /></div><em>{stagePoints.toLocaleString("ar-SA")} / 120 نقطة</em>{available && <button className="primary-button gold badge-open-button" data-testid={`button-open-badge-${index + 1}`} onClick={() => onOpenBadge(index + 1)}><Award size={15} /> فتح الوسام وخصم 120 نقطة</button>}{current && enoughChallengePoints && !enoughBalance && <span className="badge-balance-warning">رصيدك الحالي لا يكفي لخصم 120 نقطة.</span>}</article>; })}</div>{rewards.badgeCount >= 3 && <div className="gift-choice-panel"><div className="eyebrow" style={{ justifyContent: "center" }}>صندوق الهدايا مفتوح</div><h3>اختر صندوقاً</h3><p>كل صندوق يمنح عشوائياً واحدة من الهدايا الثلاث التي حددها ولي الأمر، ولا يضيف نقاطاً.</p><div className="gift-choice-grid">{content.majorBoxRewards.map((_, index) => <button key={index} className="mystery-box available" data-testid={`button-select-gift-${index + 1}`} onClick={() => chooseRandomGift(index)}><Box size={28} /><strong>الصندوق {index + 1}</strong><span>اضغط لكشف الهدية</span></button>)}</div></div>}</div>}
+        {panel === "badges" && <div><div className="extras-modal-heading"><Award size={25} /><div><div className="eyebrow">مراحل الأوسمة الثلاث</div><h2>تقدم {childName}</h2></div></div>{boxNotice && <p className="game-message gift-result-message">{boxNotice}</p>}<div className="badge-progress-summary"><strong>{rewards.badgeCount >= 3 ? "اكتملت المراحل الثلاث" : `المرحلة ${rewards.badgeCount + 1} • ${rewards.challengePoints.toLocaleString("ar-SA")} / 120 نقطة`}</strong><span>كل 120 نقطة من التحديات تفتح وساماً واحداً وتُخصم عند فتحه.</span><div className="badge-track"><i style={{ width: `${rewards.badgeCount >= 3 ? 100 : Math.min(100, (rewards.challengePoints / 120) * 100)}%` }} /></div></div><div className="badge-stages">{[{ title: "وسام البداية", note: "أول وصول إلى 120 نقطة في التحديات" }, { title: "وسام التقدم", note: "ثاني وصول إلى 120 نقطة في التحديات" }, { title: "وسام البطولة", note: "ثالث وصول إلى 120 نقطة في التحديات" }].map((stage, index) => { const opened = rewards.badgeCount > index; const enoughChallengePoints = rewards.challengePoints >= 120; const enoughBalance = points >= 120; const available = rewards.badgeCount === index && enoughChallengePoints && enoughBalance; const current = !opened && rewards.badgeCount === index; const stagePoints = opened ? 120 : current ? Math.min(120, rewards.challengePoints) : 0; return <article className={`badge-stage ${opened ? "earned" : available ? "current" : ""}`} key={stage.title}><span className="badge-stage-medal"><Award size={30} /></span><small>المرحلة {index + 1}</small><strong>{stage.title}</strong><p>{stage.note}</p><div className="badge-track"><i style={{ width: `${(stagePoints / 120) * 100}%` }} /></div><em>{stagePoints.toLocaleString("ar-SA")} / 120 نقطة</em>{available && <button className="primary-button gold badge-open-button" data-testid={`button-open-badge-${index + 1}`} onClick={() => onOpenBadge(index + 1)}><Award size={15} /> فتح الوسام وخصم 120 نقطة</button>}{current && enoughChallengePoints && !enoughBalance && <span className="badge-balance-warning">رصيدك الحالي لا يكفي لخصم 120 نقطة.</span>}</article>; })}</div>{rewards.badgeCount >= 3 && <div className="gift-choice-panel"><div className="eyebrow" style={{ justifyContent: "center" }}>صندوق الهدايا مفتوح</div><h3>{giftStage === "closed" ? "شاهد الهدايا أولاً" : giftStage === "revealed" ? "راجع الخيارات ثم ابدأ" : giftStage === "shuffling" ? "جاري خلط الهدايا..." : "اختر صندوقك الآن"}</h3>{giftStage === "closed" && <><p>اضغط لرؤية الهدايا الثلاث قبل بدء الخلط.</p><button className="primary-button gold gift-view-button" data-testid="button-view-gifts" onClick={revealGifts}><Box size={18} /> رؤية الهدايا</button></>}{giftStage === "revealed" && <><p>هذه هي الهدايا الممكنة. اضغط بدء لإخفائها وخلط أماكنها بسرعة.</p><div className="gift-choice-grid gift-revealed-grid">{giftOrder.map((giftIndex) => <article className="mystery-box gift-revealed-card" key={giftIndex}><Box size={28} /><strong>{content.majorBoxRewards[giftIndex].toLocaleString("ar-SA")} ريال</strong><span>هدية ممكنة</span></article>)}</div><button className="primary-button gold gift-start-button" data-testid="button-start-gift-shuffle" onClick={startGiftShuffle}><Play size={17} /> بدء</button></>}{(giftStage === "shuffling" || giftStage === "ready") && <><p>{giftStage === "shuffling" ? "ركز جيداً... الصناديق تتحرك بسرعة!" : "اختر صندوقاً واحداً، وستكشف لك اللعبة هديتك عشوائياً."}</p><div className={`gift-choice-grid gift-shuffle-grid ${giftStage === "shuffling" ? "is-shuffling" : "is-ready"}`}>{giftOrder.map((giftIndex, position) => <button className="mystery-box gift-shuffle-card" key={giftIndex} data-testid={giftStage === "ready" ? `button-gift-box-${position + 1}` : undefined} disabled={giftStage !== "ready"} onClick={() => chooseRandomGift(position)}><Box size={34} /><strong>صندوق {position + 1}</strong><span>{giftStage === "shuffling" ? "..." : "اضغط للاختيار"}</span></button>)}</div></>}</div>}</div>}
       </section>
     </div>,
     document.body,
