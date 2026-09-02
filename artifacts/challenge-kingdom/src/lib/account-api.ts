@@ -35,10 +35,17 @@ export type MemberSession = {
 type ApiErrorBody = { error?: string; message?: string };
 
 export class AccountApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
     super(message);
     this.name = "AccountApiError";
+    this.status = status;
   }
+}
+
+export function isFamilySessionFailure(error: unknown): error is AccountApiError {
+  return error instanceof AccountApiError && error.status === 404;
 }
 
 const accountApiUrl = import.meta.env.VITE_ACCOUNTS_API_URL?.trim()

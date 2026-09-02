@@ -42,7 +42,7 @@ import kinanPhoto from "@assets/كنان_1787868667282.jpeg";
 import { AdminConsole } from "./components/admin-console";
 import { ChildExtras, defaultChildRewards, normalizeChildRewards, type BoxOpening, type ChildRewardsState } from "./components/child-extras";
 import { defaultChildContent, normalizeChildContent, type ChildContentConfig } from "./lib/child-content";
-import { AccountApiError, accountsApi, type FamilyMember } from "./lib/account-api";
+import { accountsApi, isFamilySessionFailure, type FamilyMember } from "./lib/account-api";
 
 type ProfileId = string;
 type BeforeInstallPromptEvent = Event & {
@@ -213,9 +213,10 @@ function avatarSymbol(preset: string | undefined, fallback: string) {
 const kingdomApiUrl = import.meta.env.VITE_KINGDOM_API_URL?.trim()
   || "/api/kingdom-state";
 const kingdomApiSaveMethod = "PUT";
+const expiredFamilySessionNotice = "انتهت الجلسة لأن رمز المملكة تغيّر. أدخل الرمز الجديد لإعادة الربط.";
 
-function readSavedState(): SavedState {
-  const fallback: SavedState = {
+function emptySavedState(): SavedState {
+  return {
     selectedId: null,
     completed: { ayham: 0, kinan: 0 },
     points: { ayham: 0, kinan: 0 },
@@ -224,6 +225,10 @@ function readSavedState(): SavedState {
     childContent: defaultChildContent,
     profileAvatars: { ayham: "knight", kinan: "astronaut" },
   };
+}
+
+function readSavedState(): SavedState {
+  const fallback = emptySavedState();
   try {
     const stored = localStorage.getItem(storageKey);
     if (!stored) return fallback;
@@ -649,7 +654,9 @@ function App() {
   const skipCloudSaveRef = useRef(false);
   const lastCloudSignatureRef = useRef<string | null>(null);
   const cloudSaveInFlightRef = useRef(false);
+  const cloudSaveGenerationRef = useRef<number | null>(null);
   const pendingCloudSaveRef = useRef(false);
+  const sessionGenerationRef = useRef(0);
   const completedProfileIdRef = useRef<ProfileId | null>(null);
   const completedChallengeIdRef = useRef<string | null>(null);
   const completionBasePointsRef = useRef<number | null>(null);
@@ -712,6 +719,50 @@ function App() {
     timeUpAnnouncedRef.current = active?.timeUp ?? false;
     pauseBellPlayedRef.current = false;
   }, []);
+
+  const clearMemberSession = useCallback((notice = "") => {
+    sessionGenerationRef.current += 1;
+    memberTokenRef.current = null;
+    memberRoleRef.current = null;
+    setMemberToken(null);
+    setFamilyCode("");
+    setFamilyUsername("");
+    setFamilyMembers([]);
+    setMembersLoading(false);
+    setMembersError("");
+    setSelectedId(null);
+    const clearedState = emptySavedState();
+    savedRef.current = clearedState;
+    activeChallengesRef.current = {};
+    setSaved(clearedState);
+    setActiveChallenges({});
+    applyActiveChallenge(null);
+    setScreen("choose");
+    setTab("quest");
+    setProfileAccessAction(null);
+    setProfileAccessTarget(null);
+    setProfileAccessCode("");
+    setProfileAccessError("");
+    pendingChildUnlockRef.current = null;
+    setFinishCode("");
+    setFinishCodeError("");
+    setFinishCodeOpen(false);
+    setPointResult(null);
+    cloudVersionRef.current = null;
+    cloudReadyRef.current = false;
+    lastCloudSignatureRef.current = null;
+    skipCloudSaveRef.current = false;
+    cloudSaveGenerationRef.current = null;
+    pendingCloudSaveRef.current = false;
+    completedProfileIdRef.current = null;
+    completedChallengeIdRef.current = null;
+    completionBasePointsRef.current = null;
+    completionBaseCompletedRef.current = null;
+    completionPointsDeltaRef.current = null;
+    completionCompletedDeltaRef.current = null;
+    setSessionNotice(notice);
+    setSyncStatus("needs-code");
+  }, [applyActiveChallenge]);
 
   const cancelTimedOutMission = useCallback(() => {
     if (!profile || !selectedId) return;
@@ -781,49 +832,33 @@ function App() {
     });
   }, [applyActiveChallenge, selectedId]);
 
-  const invalidateFamilySession = useCallback(() => {
-    memberTokenRef.current = null;
-    memberRoleRef.current = null;
-    cloudVersionRef.current = null;
-    cloudReadyRef.current = false;
-    lastCloudSignatureRef.current = null;
-    pendingCloudSaveRef.current = false;
-    setMemberToken(null);
-    setFamilyCode("");
-    setFamilyUsername("");
-    setFamilyMembers([]);
-    setMembersError("");
-    setMembersLoading(false);
-    setSelectedId(null);
-    setSaved((current) => ({ ...current, selectedId: null }));
-    setScreen("choose");
-    setTab("quest");
-    setProfileAccessAction(null);
-    setProfileAccessTarget(null);
-    setProfileAccessCode("");
-    setProfileAccessError("");
-    pendingChildUnlockRef.current = null;
-    setFinishCode("");
-    setFinishCodeOpen(false);
-    setSessionNotice("انتهت الجلسة لأن رمز المملكة تغيّر. أدخل الرمز الجديد لإعادة الربط.");
-    setSyncStatus("needs-code");
-  }, []);
-
   const pullCloudState = useCallback(async (force = false, apply = true) => {
-    if (!familyCode || !memberTokenRef.current) return "missing" as const;
+    const requestedFamilyCode = familyCode;
+    const requestedToken = memberTokenRef.current;
+    const requestedGeneration = sessionGenerationRef.current;
+    if (!requestedFamilyCode || !requestedToken) return "missing" as const;
     try {
       const response = await fetch(kingdomApiUrl, {
-        headers: { "x-family-code": familyCode, Authorization: `Bearer ${memberTokenRef.current}` },
+        headers: { "x-family-code": requestedFamilyCode, Authorization: `Bearer ${requestedToken}` },
         cache: "no-store",
       });
       if (response.status === 401) {
-        invalidateFamilySession();
+        if (
+          sessionGenerationRef.current === requestedGeneration
+          && familyCode === requestedFamilyCode
+          && memberTokenRef.current === requestedToken
+        ) clearMemberSession(expiredFamilySessionNotice);
         return "unauthorized" as const;
       }
       if (response.status === 404) return "missing" as const;
       if (!response.ok) throw new Error(`Cloud request failed with ${response.status}.`);
 
       const payload = await response.json() as CloudStateResponse;
+      if (
+        sessionGenerationRef.current !== requestedGeneration
+        || familyCode !== requestedFamilyCode
+        || memberTokenRef.current !== requestedToken
+      ) return "stale" as const;
       if (apply && (force || payload.version > (cloudVersionRef.current ?? 0))) {
         applyCloudState(payload);
       } else {
@@ -835,16 +870,20 @@ function App() {
       setSyncStatus("offline");
       return "offline" as const;
     }
-  }, [applyCloudState, familyCode, invalidateFamilySession]);
+  }, [applyCloudState, clearMemberSession, familyCode]);
 
   const saveCloudState = useCallback(async (keepalive = false) => {
-    if (!familyCode || !memberTokenRef.current || !cloudReadyRef.current) return;
-    if (cloudSaveInFlightRef.current) {
+    const requestedFamilyCode = familyCode;
+    const requestedToken = memberTokenRef.current;
+    const requestedGeneration = sessionGenerationRef.current;
+    if (!requestedFamilyCode || !requestedToken || !cloudReadyRef.current) return;
+    if (cloudSaveInFlightRef.current && cloudSaveGenerationRef.current === requestedGeneration) {
       pendingCloudSaveRef.current = true;
       return;
     }
 
     cloudSaveInFlightRef.current = true;
+    cloudSaveGenerationRef.current = requestedGeneration;
     let completionConflictRetried = false;
     try {
       do {
@@ -865,8 +904,8 @@ function App() {
           method: kingdomApiSaveMethod,
           headers: {
             "Content-Type": "application/json",
-            "x-family-code": familyCode,
-            Authorization: `Bearer ${memberTokenRef.current}`,
+            "x-family-code": requestedFamilyCode,
+            Authorization: `Bearer ${requestedToken}`,
           },
           body: JSON.stringify({
             state: stateForSave,
@@ -884,7 +923,11 @@ function App() {
         });
 
         if (response.status === 401) {
-          invalidateFamilySession();
+          if (
+            sessionGenerationRef.current === requestedGeneration
+            && familyCode === requestedFamilyCode
+            && memberTokenRef.current === requestedToken
+          ) clearMemberSession(expiredFamilySessionNotice);
           return;
         }
         if (response.status === 409) {
@@ -910,6 +953,11 @@ function App() {
         if (!response.ok) throw new Error(`Cloud save failed with ${response.status}.`);
 
         const payload = await response.json() as CloudStateResponse;
+        if (
+          sessionGenerationRef.current !== requestedGeneration
+          || familyCode !== requestedFamilyCode
+          || memberTokenRef.current !== requestedToken
+        ) return;
         cloudVersionRef.current = payload.version;
         if (completedProfileIdRef.current && !payload.activeChallenges[completedProfileIdRef.current]) {
           completedProfileIdRef.current = null;
@@ -922,11 +970,18 @@ function App() {
         setSyncStatus("synced");
       } while (pendingCloudSaveRef.current);
     } catch {
-      setSyncStatus("offline");
+      if (
+        sessionGenerationRef.current === requestedGeneration
+        && familyCode === requestedFamilyCode
+        && memberTokenRef.current === requestedToken
+      ) setSyncStatus("offline");
     } finally {
-      cloudSaveInFlightRef.current = false;
+      if (cloudSaveGenerationRef.current === requestedGeneration) {
+        cloudSaveInFlightRef.current = false;
+        cloudSaveGenerationRef.current = null;
+      }
     }
-  }, [familyCode, invalidateFamilySession, pullCloudState]);
+  }, [clearMemberSession, familyCode, pullCloudState]);
 
   useEffect(() => {
     if (!familyCode || !memberToken) {
@@ -941,7 +996,6 @@ function App() {
     void (async () => {
       const result = await pullCloudState(true);
       if (cancelled) return;
-      if (result === "unauthorized") return;
       cloudReadyRef.current = true;
       if (result === "missing") {
         await saveCloudState();
@@ -956,9 +1010,15 @@ function App() {
   useEffect(() => {
     if (!familyCode) { setFamilyMembers([]); return; }
     let cancelled = false;
+    const requestedFamilyCode = familyCode;
+    const requestedGeneration = sessionGenerationRef.current;
     setMembersLoading(true); setMembersError("");
     void accountsApi.familyMembers(familyUsername, familyCode).then((result) => {
-      if (!cancelled) {
+      if (
+        !cancelled
+        && sessionGenerationRef.current === requestedGeneration
+        && familyCode === requestedFamilyCode
+      ) {
         setFamilyMembers(result.members);
         setSaved((current) => {
            const next = { ...current, completed: { ...current.completed }, points: { ...current.points }, customMissions: { ...current.customMissions }, childRewards: { ...current.childRewards } };
@@ -973,15 +1033,20 @@ function App() {
         setSelectedId((current) => result.members.some((member) => member.id === current && member.role === "child") ? current : null);
       }
     }).catch((cause) => {
-      if (cancelled) return;
-      if (cause instanceof AccountApiError && (cause.status === 401 || cause.status === 404)) {
-        invalidateFamilySession();
-        return;
+      if (
+        !cancelled
+        && sessionGenerationRef.current === requestedGeneration
+        && familyCode === requestedFamilyCode
+      ) {
+        if (isFamilySessionFailure(cause)) {
+          clearMemberSession(expiredFamilySessionNotice);
+        } else {
+          setMembersError(cause instanceof Error ? cause.message : "تعذر تحميل ملفات العائلة.");
+        }
       }
-      setMembersError(cause instanceof Error ? cause.message : "تعذر تحميل ملفات العائلة.");
     }).finally(() => { if (!cancelled) setMembersLoading(false); });
     return () => { cancelled = true; };
-  }, [familyCode, familyUsername, invalidateFamilySession]);
+  }, [clearMemberSession, familyCode, familyUsername]);
 
   useEffect(() => {
     if (!familyCode || !memberToken || !cloudReadyRef.current) return;
@@ -1043,15 +1108,9 @@ function App() {
     const normalizedUsername = username.trim().toLowerCase();
     const normalizedCode = code.trim();
     await accountsApi.bootstrapFamily(normalizedUsername, normalizedCode);
-    memberTokenRef.current = null;
-    memberRoleRef.current = null;
-    setMemberToken(null);
-    cloudVersionRef.current = null;
-    cloudReadyRef.current = false;
-    lastCloudSignatureRef.current = null;
+    clearMemberSession();
     setFamilyUsername(normalizedUsername);
     setFamilyCode(normalizedCode);
-    setSessionNotice("");
     setSyncStatus("connecting");
   };
 
@@ -1279,7 +1338,11 @@ function App() {
       }
       else if (action === "parent") { setTab("parent"); setScreen("home"); }
       if (action !== "switch") void pullCloudState(true);
-    } catch {
+    } catch (cause) {
+      if (isFamilySessionFailure(cause)) {
+        clearMemberSession(expiredFamilySessionNotice);
+        return;
+      }
       setProfileAccessCode(""); setProfileAccessError("الرمز غير صحيح. حاول مرة أخرى.");
     }
   };
@@ -1406,7 +1469,13 @@ function App() {
       const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, finishCode, "owner");
       memberTokenRef.current = session.token; setMemberToken(session.token);
       memberRoleRef.current = session.role;
-    } catch { setFinishCode(""); setFinishCodeError("الرمز غير صحيح. حاول مرة أخرى."); return; }
+    } catch (cause) {
+      if (isFamilySessionFailure(cause)) {
+        clearMemberSession(expiredFamilySessionNotice);
+        return;
+      }
+      setFinishCode(""); setFinishCodeError("الرمز غير صحيح. حاول مرة أخرى."); return;
+    }
     timerWasRunningRef.current = false;
     setTimerRunning(false);
     setTimerEndsAt(null);
@@ -1664,7 +1733,10 @@ function App() {
       memberTokenRef.current = session.token; setMemberToken(session.token);
       memberRoleRef.current = session.role;
       void pullCloudState(true);
-    } catch { return false; }
+    } catch (cause) {
+      if (isFamilySessionFailure(cause)) clearMemberSession(expiredFamilySessionNotice);
+      return false;
+    }
     setSaved((current) => ({
       ...current,
       completed: { ...current.completed, [profile.id]: 0 },
@@ -1674,27 +1746,7 @@ function App() {
   };
 
   const logout = () => {
-    memberTokenRef.current = null;
-    memberRoleRef.current = null;
-    setMemberToken(null);
-    setFamilyCode("");
-    setFamilyUsername("");
-    setFamilyMembers([]);
-    setMembersError("");
-    setSelectedId(null);
-    setSaved((current) => ({ ...current, selectedId: null }));
-    setScreen("choose");
-    setTab("quest");
-    setProfileAccessAction(null);
-    setProfileAccessTarget(null);
-    setProfileAccessCode("");
-    setProfileAccessError("");
-    pendingChildUnlockRef.current = null;
-    setFinishCode("");
-    cloudVersionRef.current = null;
-    cloudReadyRef.current = false;
-    lastCloudSignatureRef.current = null;
-    setSessionNotice("");
+    clearMemberSession();
   };
 
   const goBack = () => {
