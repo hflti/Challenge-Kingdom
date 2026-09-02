@@ -57,6 +57,7 @@ export type StoreItemContent = {
   title: string;
   cost: number;
   kind: RewardKind;
+  imageUrl?: string;
 };
 
 export type PointRewardsContent = {
@@ -194,7 +195,8 @@ export function validateChildContent(value: unknown): ChildContentValidation {
   for (const item of content.storeItems) {
     if (!item || typeof item !== "object" || !validText(item.id, rules.storeItemIdMaxLength) || !validText(item.title, rules.storeItemTitleMaxLength)
       || !Number.isInteger(item.cost) || item.cost < rules.storeCostMin || item.cost > rules.storeCostMax
-      || !(rules.rewardKinds as readonly string[]).includes(item.kind as string)) {
+      || !(rules.rewardKinds as readonly string[]).includes(item.kind as string)
+      || (item.imageUrl !== undefined && (typeof item.imageUrl !== "string" || !/^\/api\/storage\/reward-images\/[0-9a-f-]{36}$/i.test(item.imageUrl)))) {
       return { valid: false, error: "أسعار المتجر يجب أن تكون أعداداً صحيحة بين 5 و25." };
     }
   }
@@ -275,6 +277,13 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
           ? Math.min(25, Math.max(5, Math.round((item as StoreItemContent).cost)))
           : fallback.cost,
         kind,
+        ...(
+          item && typeof item === "object"
+          && typeof (item as StoreItemContent).imageUrl === "string"
+          && /^\/api\/storage\/reward-images\/[0-9a-f-]{36}$/i.test((item as StoreItemContent).imageUrl!)
+            ? { imageUrl: (item as StoreItemContent).imageUrl }
+            : {}
+        ),
       };
     })
     : defaultChildContent.storeItems;

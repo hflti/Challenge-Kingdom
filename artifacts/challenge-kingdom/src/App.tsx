@@ -26,6 +26,7 @@ import {
   RotateCcw,
   Shield,
   ShieldCheck,
+  ShoppingBag,
   Sparkles,
   Star,
   Swords,
@@ -110,16 +111,7 @@ const profiles: Profile[] = [
   },
 ];
 
-const missions: Mission[] = [
-  {
-    id: "deep-focus",
-    title: "تركيز الواجب",
-    description: "حل الواجب الأصعب بهدوء، واترك الملل خارج القلعة.",
-    duration: 8 * 60,
-    icon: Swords,
-    featured: true,
-  },
-];
+const missions: Mission[] = [];
 
 type SavedState = {
   selectedId: ProfileId | null;
@@ -217,6 +209,28 @@ function AvatarVisual({ value, alt }: { value: string; alt: string }) {
     ? <img className="avatar-photo" src={value} alt={alt} />
     : <>{value}</>;
 }
+
+async function resizeImageForUpload(file: File): Promise<File> {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error("اختر صورة بصيغة JPG أو PNG أو WebP.");
+  }
+  const absoluteLimit = 50 * 1024 * 1024;
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) {
+    bitmap.close();
+    throw new Error("تعذر تجهيز الصورة.");
+  }
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.84));
+  if (!blob || blob.size >= absoluteLimit) throw new Error("تعذر تصغير الصورة إلى أقل من 50 ميجابايت.");
+  return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "image"}.webp`, { type: "image/webp" });
+}
 const kingdomApiUrl = import.meta.env.VITE_KINGDOM_API_URL?.trim()
   || "/api/kingdom-state";
 const kingdomApiSaveMethod = "PUT";
@@ -260,7 +274,8 @@ function readSavedState(): SavedState {
 function readActiveChallenges(): ActiveChallenges {
   try {
     const raw = localStorage.getItem(activeChallengesKey);
-    return raw ? (JSON.parse(raw) as ActiveChallenges) : {};
+    const parsed = raw ? JSON.parse(raw) as ActiveChallenges : {};
+    return Object.fromEntries(Object.entries(parsed).filter(([, challenge]) => challenge?.mission?.id !== "deep-focus"));
   } catch {
     return {};
   }
@@ -313,7 +328,8 @@ function normalizeSyncedKingdomState(value: unknown): SyncedKingdomState | null 
 }
 
 function normalizeActiveChallenges(value: unknown): ActiveChallenges {
-  return value && typeof value === "object" ? value as ActiveChallenges : {};
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(Object.entries(value as ActiveChallenges).filter(([, challenge]) => challenge?.mission?.id !== "deep-focus"));
 }
 
 function cloudSyncSignature(state: SavedState, challenges: ActiveChallenges) {
@@ -1692,9 +1708,7 @@ function App() {
   const uploadProfilePhoto = async (profileId: ProfileId, file: File) => {
     const token = memberTokenRef.current;
     if (!token || memberRoleRef.current !== "owner") throw new Error("أدخل رمز المملكة من مرصد الوالدين أولاً.");
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) {
-      throw new Error("اختر صورة JPG أو PNG أو WebP بحجم لا يتجاوز 5 ميجابايت.");
-    }
+    const resizedFile = await resizeImageForUpload(file);
     const prepared = await fetch("/api/storage/profile-images/request-url", {
       method: "POST",
       headers: {
@@ -1702,13 +1716,43 @@ function App() {
         "x-family-code": familyCode,
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ profileId, name: file.name, size: file.size, contentType: file.type }),
+      body: JSON.stringify({ profileId, name: resizedFile.name, size: resizedFile.size, contentType: resizedFile.type }),
     });
     if (!prepared.ok) throw new Error("تعذر تجهيز رفع الصورة.");
     const { uploadURL, photoUrl } = await prepared.json() as { uploadURL: string; photoUrl: string };
-    const uploaded = await fetch(uploadURL, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
+    const uploaded = await fetch(uploadURL, { method: "PUT", headers: { "Content-Type": resizedFile.type }, body: resizedFile });
     if (!uploaded.ok) throw new Error("تعذر رفع الصورة. حاول مرة أخرى.");
     setSaved((current) => ({ ...current, profilePhotos: { ...current.profilePhotos, [profileId]: photoUrl } }));
+  };
+
+  const updateReward = (index: number, patch: Partial<ChildContentConfig["storeItems"][number]>) => {
+    localMutationRef.current += 1;
+    setSaved((current) => ({
+      ...current,
+      childContent: {
+        ...current.childContent,
+        storeItems: current.childContent.storeItems.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item),
+      },
+    }));
+  };
+
+  const uploadRewardImage = async (index: number, file: File) => {
+    const token = memberTokenRef.current;
+    if (!token || memberRoleRef.current !== "owner") throw new Error("مرصد الوالدين وحده يستطيع تغيير صور المكافآت.");
+    const resizedFile = await resizeImageForUpload(file);
+    const prepared = await fetch("/api/storage/reward-images/request-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-family-code": familyCode, Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ size: resizedFile.size, contentType: resizedFile.type }),
+    });
+    if (!prepared.ok) {
+      const response = await prepared.json().catch(() => ({})) as { error?: string };
+      throw new Error(response.error ?? "تعذر تجهيز رفع صورة المكافأة.");
+    }
+    const { uploadURL, imageUrl } = await prepared.json() as { uploadURL: string; imageUrl: string };
+    const uploaded = await fetch(uploadURL, { method: "PUT", headers: { "Content-Type": resizedFile.type }, body: resizedFile });
+    if (!uploaded.ok) throw new Error("تعذر رفع صورة المكافأة. حاول مرة أخرى.");
+    updateReward(index, { imageUrl });
   };
 
   const deleteMission = (missionId: string) => {
@@ -1744,7 +1788,6 @@ function App() {
       const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, code.trim(), "owner");
       memberTokenRef.current = session.token;
       memberRoleRef.current = session.role;
-      awardExtraPoints(saved.childContent.pointRewards.readingStory);
       return { ok: true };
     } catch (cause) {
       if (isFamilySessionFailure(cause)) {
@@ -1922,7 +1965,7 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset }, profilePhotos: { ...current.profilePhotos, [profileId]: "" } }))} onUploadPhoto={uploadProfilePhoto} />
+              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset }, profilePhotos: { ...current.profilePhotos, [profileId]: "" } }))} onUploadPhoto={uploadProfilePhoto} onUpdateReward={updateReward} onUploadRewardImage={uploadRewardImage} />
             ) : screen === "home" ? (
               <HomeView profile={activeProfile} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onCreateMission={(...args) => requestChildUnlock(() => createMission(...args))} onDeleteMission={(missionId) => requestChildUnlock(() => deleteMission(missionId))} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onFinishStory={finishReadingStory} onRequestUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
@@ -2237,7 +2280,7 @@ function HomeView({
               <div className="eyebrow">الفصل الثالث • المهمة اليومية</div>
               <h1 className="display-title">مرحباً يا {profile.name}</h1>
               <p className="subtle">الملل يقترب من أسوار المملكة. هل تفتح صفحة جديدة وتدافع عن كنز المعرفة؟</p>
-              <button className="primary-button gold hero-cta" data-testid="button-start-featured" data-sound="start" onClick={() => onStart(activeMission ?? availableMissions[0])}>{activeMission ? <>استأنف التحدي <Play size={16} /></> : points >= mapFinishPoints ? <>واصل جمع الأوسمة <Star size={16} /></> : <>ابدأ المهمة <ArrowLeft size={16} /></>}</button>
+              <button className="primary-button gold hero-cta" data-testid="button-start-featured" data-sound="start" disabled={!activeMission && availableMissions.length === 0} onClick={() => { const nextMission = activeMission ?? availableMissions[0]; if (nextMission) onStart(nextMission); }}>{activeMission ? <>استأنف التحدي <Play size={16} /></> : availableMissions.length === 0 ? <>أضف مهمة أولاً <Plus size={16} /></> : points >= mapFinishPoints ? <>واصل جمع الأوسمة <Star size={16} /></> : <>ابدأ المهمة <ArrowLeft size={16} /></>}</button>
             </div>
             <div className="hero-figure" aria-hidden="true"><div className="cape" /><div className="hero-head" /><div className="hero-shield"><Shield size={19} /></div><Sparkles className="hero-spark one" size={19} /><Star className="hero-spark two" size={16} fill="currentColor" /></div>
           </div>
@@ -2271,10 +2314,10 @@ function HomeView({
           {taskError && <p className="form-error" data-testid="status-create-mission-error">{taskError}</p>}
         </form>
         <div className="missions-grid">
-             {availableMissions.map((item) => {
+             {availableMissions.map((item, index) => {
             const Icon = item.icon;
                 const isLatestCustom = item.id.startsWith("custom-") && item.id === availableMissions.at(-1)?.id;
-                const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""} ${isLatestCustom ? "latest-custom-mission" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={Boolean(activeMission && activeMission.id !== item.id)}>
+                const missionCard = <button key={item.id} className={`mission-card mission-color-${index % 6} ${item.featured ? "featured" : ""} ${isLatestCustom ? "latest-custom-mission" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={Boolean(activeMission && activeMission.id !== item.id)}>
                  <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span><span className="card-avatar" aria-label={`رمز ${profile.name}`}><AvatarVisual value={avatar} alt={profile.name} /></span></div>
                   <h3>{item.title}</h3><p>{item.description}</p>{item.rewardPoints && <span className="mission-reward">مكافأة {item.rewardPoints.toLocaleString("ar-SA")} نقطة</span>}<ArrowLeft className="mission-arrow" size={18} />
                </button>;
@@ -2302,7 +2345,7 @@ function HomeView({
             </div>}
         </div>
       </section>
-      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onFinishStory={onFinishStory} onRequestUnlock={onRequestUnlock} />
+      <ChildExtras content={childContent} points={points} completed={completed} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onFinishStory={onFinishStory} onRequestUnlock={onRequestUnlock} />
     </>
   );
 }
@@ -2512,6 +2555,8 @@ function ParentView({
   onChooseProfile,
   onChooseAvatar,
   onUploadPhoto,
+  onUpdateReward,
+  onUploadRewardImage,
 }: {
   profiles: Profile[];
   saved: SavedState;
@@ -2520,15 +2565,32 @@ function ParentView({
   onChooseProfile: () => void;
   onChooseAvatar: (profileId: ProfileId, preset: string) => void;
   onUploadPhoto: (profileId: ProfileId, file: File) => Promise<void>;
+  onUpdateReward: (index: number, patch: Partial<ChildContentConfig["storeItems"][number]>) => void;
+  onUploadRewardImage: (index: number, file: File) => Promise<void>;
 }) {
   const total = dynamicProfiles.reduce((sum, item) => sum + (saved.completed[item.id] ?? 0), 0);
   const [uploadStatus, setUploadStatus] = useState<Record<ProfileId, string>>({});
+  const [rewardUploadStatus, setRewardUploadStatus] = useState<Record<number, string>>({});
   return (
     <section className="parent-view">
       <div className="parent-banner"><div><div className="eyebrow">مرصد الوالدين • {getArabicDate()}</div><h1>غرفة القيادة العائلية</h1><p>ملخص لطيف لما أنجزه الأبطال اليوم، من دون تحويل الرحلة إلى جدول درجات.</p></div><div className="parent-total" data-testid="display-family-total"><strong>{total}</strong><span>مهمة في دفتر العائلة</span></div></div>
       <section className="avatar-picker panel" data-testid="panel-avatar-picker">
         <h2 className="panel-title">صور الأبطال</h2><p className="panel-subtitle">ارفعوا صورة الطفل من الهاتف أو اختاروا رمزاً جاهزاً. تتزامن الصورة مع أجهزة العائلة.</p>
         <div className="avatar-picker-children">{dynamicProfiles.map((child) => <div className="avatar-picker-child" key={child.id}><strong>{child.name}</strong><span className="profile-photo-preview"><AvatarVisual value={saved.profilePhotos[child.id] ?? avatarSymbol(saved.profileAvatars[child.id], child.initials)} alt={child.name} /></span><label className="outline-button avatar-upload-button"><ImagePlus size={15} /> رفع صورة<input type="file" accept="image/jpeg,image/png,image/webp" onChange={async (event) => { const input = event.currentTarget; const file = input.files?.[0]; if (!file) return; setUploadStatus((current) => ({ ...current, [child.id]: "جارٍ رفع الصورة…" })); try { await onUploadPhoto(child.id, file); setUploadStatus((current) => ({ ...current, [child.id]: "تم حفظ الصورة ومزامنتها." })); } catch (error) { setUploadStatus((current) => ({ ...current, [child.id]: error instanceof Error ? error.message : "تعذر رفع الصورة." })); } input.value = ""; }} /></label>{uploadStatus[child.id] && <small className="avatar-upload-status">{uploadStatus[child.id]}</small>}<div className="avatar-preset-list">{avatarPresets.map((preset) => <button key={preset.id} type="button" className={`avatar-preset ${!saved.profilePhotos[child.id] && saved.profileAvatars[child.id] === preset.id ? "selected" : ""}`} aria-label={`${preset.label} لـ${child.name}`} aria-pressed={!saved.profilePhotos[child.id] && saved.profileAvatars[child.id] === preset.id} onClick={() => onChooseAvatar(child.id, preset.id)}><span>{preset.symbol}</span><small>{preset.label}</small></button>)}</div></div>)}</div>
+      </section>
+      <section className="parent-rewards-editor panel" data-testid="panel-parent-rewards">
+        <div className="panel-top"><div><h2 className="panel-title">إعداد مكافآت الأطفال</h2><p className="panel-subtitle">هذه الإعدادات متاحة للوالدين فقط، وتتزامن مع متجر الأطفال على جميع الأجهزة.</p></div><ShoppingBag color="hsl(var(--primary))" /></div>
+        <div className="parent-rewards-grid">
+          {saved.childContent.storeItems.map((item, index) => (
+            <article className="parent-reward-card" key={item.id}>
+              <span className="parent-reward-image">{item.imageUrl ? <img src={item.imageUrl} alt={item.title} /> : <Sparkles size={24} />}</span>
+              <label className="admin-field"><span>اسم المكافأة</span><input className="admin-input" value={item.title} maxLength={160} onChange={(event) => onUpdateReward(index, { title: event.target.value })} /></label>
+              <label className="admin-field"><span>السعر بالنقاط</span><input className="admin-input" type="number" min={5} max={25} value={item.cost} onChange={(event) => onUpdateReward(index, { cost: Math.min(25, Math.max(5, Math.round(Number(event.target.value) || 5))) })} /></label>
+              <label className="outline-button reward-image-upload"><ImagePlus size={15} /> تغيير الصورة<input type="file" accept="image/jpeg,image/png,image/webp" onChange={async (event) => { const input = event.currentTarget; const file = input.files?.[0]; if (!file) return; setRewardUploadStatus((current) => ({ ...current, [index]: "جارٍ تصغير الصورة ورفعها…" })); try { await onUploadRewardImage(index, file); setRewardUploadStatus((current) => ({ ...current, [index]: "تم حفظ الصورة ومزامنتها." })); } catch (error) { setRewardUploadStatus((current) => ({ ...current, [index]: error instanceof Error ? error.message : "تعذر رفع الصورة." })); } input.value = ""; }} /></label>
+              {rewardUploadStatus[index] && <small className="avatar-upload-status">{rewardUploadStatus[index]}</small>}
+            </article>
+          ))}
+        </div>
       </section>
       <div className="parent-grid">
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">نبض الأبطال</h2><p className="panel-subtitle">هذا الأسبوع حتى الآن</p></div><Trophy color="hsl(var(--accent))" /></div><div className="child-progress">

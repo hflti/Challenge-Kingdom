@@ -125,7 +125,8 @@ export function isValidChildContent(value: unknown): value is JsonMap {
       || (item.cost as number) < rules.storeCostMin
       || (item.cost as number) > rules.storeCostMax
       || typeof item.kind !== "string"
-      || !rules.rewardKinds.includes(item.kind)) return false;
+      || !rules.rewardKinds.includes(item.kind)
+      || (item.imageUrl !== undefined && (typeof item.imageUrl !== "string" || !/^\/api\/storage\/reward-images\/[0-9a-f-]{36}$/i.test(item.imageUrl)))) return false;
   }
   if (!pointRewards || typeof pointRewards !== "object" || Array.isArray(pointRewards)) return false;
   const points = pointRewards as JsonMap;

@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { accountsApi, type FamilyMember, type FamilySummary, type MemberRole } from "../lib/account-api";
-import { defaultChildContent, normalizeChildContent, validateChildContent, type ChildContentConfig, type RewardKind } from "../lib/child-content";
+import { defaultChildContent, normalizeChildContent, validateChildContent, type ChildContentConfig } from "../lib/child-content";
 
 type AdminConsoleProps = { initialToken: string; onClose: () => void };
 
@@ -488,7 +488,7 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
       {showContentSettings && selectedFamily && (
         <Modal title={`تخصيص تجربة أطفال ${selectedFamily.name}`} onClose={() => setShowContentSettings(false)} testId="modal-child-content">
           <form className="admin-content-editor" onSubmit={saveChildContent}>
-            <p className="admin-modal-copy">عدّل الألعاب والقصص والمكافآت لهذه المملكة فقط. تُحفظ التغييرات مركزياً وتصل إلى جميع أجهزة الأطفال.</p>
+            <p className="admin-modal-copy">عدّل قصص القراءة لهذه المملكة فقط. تُحفظ التغييرات مركزياً وتصل إلى جميع أجهزة الأطفال.</p>
             <ContentEditorFields value={childContent} onChange={setChildContent} />
             <div className="admin-form-actions sticky-actions">
               <button className="admin-btn outline-dark" type="button" data-testid="button-reset-child-content" onClick={() => { if (window.confirm("هل تريد استعادة المحتوى الافتراضي في النموذج؟")) setChildContent(structuredClone(defaultChildContent)); }}>استعادة الافتراضي</button>
@@ -517,26 +517,9 @@ function ContentEditorFields({ value, onChange }: { value: ChildContentConfig; o
   const updateStory = (index: number, patch: Partial<ChildContentConfig["readingStories"][number]>) => {
     onChange({ ...value, readingStories: value.readingStories.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
   };
-  const updateStore = (index: number, patch: Partial<ChildContentConfig["storeItems"][number]>) => {
-    onChange({ ...value, storeItems: value.storeItems.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
-  };
-  const rewardKinds: { value: RewardKind; label: string }[] = [
-    { value: "screen", label: "وقت شاشة" },
-    { value: "treat", label: "مكافأة عينية" },
-    { value: "money", label: "مصروف" },
-    { value: "game", label: "لعبة" },
-  ];
 
   return (
     <div className="content-editor-sections">
-      <details open>
-        <summary>نقاط التعلّم <span>تُمنح لكل إنجاز</span></summary>
-        <div className="content-editor-card learning-point-rewards">
-          <div className="admin-form-row">
-            <label className="admin-field"><span>إكمال قصة القراءة</span><input className="admin-input" data-testid="input-reading-story-points" type="number" min={1} max={100} value={value.pointRewards.readingStory} onChange={(event) => onChange({ ...value, pointRewards: { ...value.pointRewards, readingStory: Number(event.target.value) } })} required /></label>
-          </div>
-        </div>
-      </details>
       <details>
         <summary>القراءة السريعة <span>6 قصص</span></summary>
         <div className="content-editor-list">
@@ -547,30 +530,6 @@ function ContentEditorFields({ value, onChange }: { value: ChildContentConfig; o
               <label className="admin-field"><span>النص المشكول</span><textarea className="admin-input content-story-text" maxLength={2500} rows={5} value={story.text} onChange={(event) => updateStory(index, { text: event.target.value })} required /></label>
             </fieldset>
           ))}
-        </div>
-      </details>
-
-      <details>
-        <summary>متجر المكافآت <span>12 مكافأة • 5–25 نقطة</span></summary>
-        <div className="content-editor-list compact">
-          {value.storeItems.map((item, index) => (
-            <fieldset className="content-editor-card" key={item.id}>
-              <legend>المكافأة {index + 1}</legend>
-              <label className="admin-field"><span>الاسم</span><input className="admin-input" data-testid={`input-store-title-${index}`} maxLength={160} value={item.title} onChange={(event) => updateStore(index, { title: event.target.value })} required /></label>
-              <div className="admin-form-row">
-                <label className="admin-field"><span>السعر</span><input className="admin-input" type="number" min={5} max={25} value={item.cost} onChange={(event) => updateStore(index, { cost: Number(event.target.value) })} required /></label>
-                <label className="admin-field"><span>النوع</span><select className="admin-input" value={item.kind} onChange={(event) => updateStore(index, { kind: event.target.value as RewardKind })}>{rewardKinds.map((kind) => <option key={kind.value} value={kind.value}>{kind.label}</option>)}</select></label>
-              </div>
-            </fieldset>
-          ))}
-        </div>
-      </details>
-
-      <details>
-        <summary>صناديق الحظ <span>قيم الجوائز</span></summary>
-        <div className="content-editor-card box-values-editor">
-          <label className="admin-field"><span>الجوائز الكبرى — 3 قيم</span><input className="admin-input" data-testid="input-major-box-rewards" value={value.majorBoxRewards.join(", ")} onChange={(event) => onChange({ ...value, majorBoxRewards: event.target.value.split(",").map(Number).filter(Number.isFinite) })} required /><small>مثال: 50, 75, 100</small></label>
-          <label className="admin-field"><span>القيم المعروضة للتحفيز — قيمتان</span><input className="admin-input" data-testid="input-display-box-rewards" value={value.displayBoxRewards.join(", ")} onChange={(event) => onChange({ ...value, displayBoxRewards: event.target.value.split(",").map(Number).filter(Number.isFinite) })} required /><small>مثال: 10, 15</small></label>
         </div>
       </details>
     </div>
