@@ -675,6 +675,7 @@ function App() {
   const completionPointsDeltaRef = useRef<number | null>(null);
   const completionCompletedDeltaRef = useRef<number | null>(null);
   const pendingChildUnlockRef = useRef<(() => void) | null>(null);
+  const localMutationRef = useRef(0);
   const approvalGateRef = useRef(Boolean(getInitialActiveChallenge()?.approvalStatus));
   const savedRef = useRef(saved);
   const activeChallengesRef = useRef(activeChallenges);
@@ -847,6 +848,7 @@ function App() {
     const requestedFamilyCode = familyCode;
     const requestedToken = memberTokenRef.current;
     const requestedGeneration = sessionGenerationRef.current;
+    const requestedMutation = localMutationRef.current;
     if (!requestedFamilyCode || !requestedToken) return "missing" as const;
     try {
       const response = await fetch(kingdomApiUrl, {
@@ -869,6 +871,7 @@ function App() {
         sessionGenerationRef.current !== requestedGeneration
         || familyCode !== requestedFamilyCode
         || memberTokenRef.current !== requestedToken
+        || localMutationRef.current !== requestedMutation
       ) return "stale" as const;
       if (apply && (force || payload.version > (cloudVersionRef.current ?? 0))) {
         applyCloudState(payload);
@@ -1372,6 +1375,7 @@ function App() {
       }
       return;
     }
+    localMutationRef.current += 1;
     setMission(nextMission);
     setActiveChallengeId(crypto.randomUUID());
     setSeconds(nextMission.duration);
@@ -1665,6 +1669,7 @@ function App() {
       duration: durationMinutes * 60,
       rewardPoints,
     };
+    localMutationRef.current += 1;
     setSaved((current) => ({
       ...current,
       customMissions: {
