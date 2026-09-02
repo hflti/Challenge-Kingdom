@@ -109,7 +109,7 @@ export const defaultChildContent: ChildContentConfig = {
     { id: "late-night", title: "نصف ساعة إضافية قبل النوم", cost: 25, kind: "screen" },
     { id: "small-toy", title: "لعبة صغيرة أو ملصقات", cost: 25, kind: "treat" },
   ],
-  majorBoxRewards: [50, 100, 150],
+  majorBoxRewards: [50, 100, 150, 200, 250],
   displayBoxRewards: [15, 25],
   pointRewards: { letterAnswer: 2, numberAnswer: 1, readingStory: 5 },
 };
@@ -205,7 +205,7 @@ export function validateChildContent(value: unknown): ChildContentValidation {
     && list.every((item) => Number.isInteger(item) && item >= rules.boxRewardMin && item <= rules.boxRewardMax)
     && new Set(list).size === list.length;
   if (!validRewardList(content.majorBoxRewards, rules.majorBoxRewardCount) || !validRewardList(content.displayBoxRewards, rules.displayBoxRewardCount)) {
-    return { valid: false, error: "يجب إدخال 3 جوائز كبرى وقيمتين تحفيزيتين مختلفتين، بين 1 و10000." };
+    return { valid: false, error: "يجب إدخال 5 هدايا رابحة وهديتين مستبعدتين مختلفتين، بين 1 و10000." };
   }
   const majorRewards = content.majorBoxRewards as number[];
   const displayRewards = content.displayBoxRewards as number[];
@@ -290,16 +290,21 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
   const rewards = (list: unknown, fallback: number[]) => Array.isArray(list) && list.length === fallback.length && list.every((item) => typeof item === "number" && Number.isFinite(item))
     ? list.map((item) => Math.min(10000, Math.max(1, Math.round(item as number))))
     : fallback;
-  const majorBoxRewards = rewards(candidate.majorBoxRewards, defaultChildContent.majorBoxRewards);
+  const legacyMajorBoxRewards = Array.isArray(candidate.majorBoxRewards) && candidate.majorBoxRewards.length === 3
+    && candidate.majorBoxRewards.every((item) => typeof item === "number" && Number.isFinite(item))
+    ? candidate.majorBoxRewards.map((item) => Math.min(10000, Math.max(1, Math.round(item as number))))
+    : null;
+  const majorBoxRewards = legacyMajorBoxRewards
+    ? [...legacyMajorBoxRewards, ...defaultChildContent.majorBoxRewards.filter((reward) => !legacyMajorBoxRewards.includes(reward))].slice(0, defaultChildContent.majorBoxRewards.length)
+    : rewards(candidate.majorBoxRewards, defaultChildContent.majorBoxRewards);
   const displayBoxRewards = rewards(candidate.displayBoxRewards, defaultChildContent.displayBoxRewards);
-  const isLegacyMajorDefaults = majorBoxRewards.join(",") === "50,75,100";
   const isLegacyDisplayDefaults = displayBoxRewards.join(",") === "10,15";
   const normalized = {
     letterGames,
     numberQuestions,
     readingStories,
     storeItems,
-    majorBoxRewards: isLegacyMajorDefaults ? defaultChildContent.majorBoxRewards : majorBoxRewards,
+    majorBoxRewards,
     displayBoxRewards: isLegacyDisplayDefaults ? defaultChildContent.displayBoxRewards : displayBoxRewards,
     pointRewards: {
       letterAnswer: typeof candidate.pointRewards?.letterAnswer === "number" ? Math.min(rules.pointRewardMax, Math.max(rules.pointRewardMin, Math.round(candidate.pointRewards.letterAnswer))) : defaultChildContent.pointRewards.letterAnswer,

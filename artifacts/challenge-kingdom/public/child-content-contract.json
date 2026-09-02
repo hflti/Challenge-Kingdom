@@ -24,7 +24,7 @@
     "storeCostMax": 25,
     "pointRewardMin": 1,
     "pointRewardMax": 100,
-    "majorBoxRewardCount": 3,
+    "majorBoxRewardCount": 5,
     "displayBoxRewardCount": 2,
     "boxRewardMin": 1,
     "boxRewardMax": 10000,
@@ -68,7 +68,7 @@
       {"id":"late-night","title":"نصف ساعة إضافية قبل النوم","cost":25,"kind":"screen"},
       {"id":"small-toy","title":"لعبة صغيرة أو ملصقات","cost":25,"kind":"treat"}
     ],
-    "majorBoxRewards": [50,100,150],
+    "majorBoxRewards": [50,100,150,200,250],
     "displayBoxRewards": [15,25],
     "pointRewards": {"letterAnswer":2,"numberAnswer":1,"readingStory":5}
   },
@@ -77,9 +77,9 @@
     {"name":"الحد الأدنى والأقصى لسعر المتجر صالحان","expected":true,"changes":[{"path":["storeItems",0,"cost"],"value":5},{"path":["storeItems",1,"cost"],"value":25}]},
     {"name":"سعر المتجر الأقل من الحد مرفوض","expected":false,"changes":[{"path":["storeItems",0,"cost"],"value":4}]},
     {"name":"سعر المتجر الأعلى من الحد مرفوض","expected":false,"changes":[{"path":["storeItems",0,"cost"],"value":26}]},
-    {"name":"الحد الأعلى لقيمة الصندوق صالح","expected":true,"changes":[{"path":["majorBoxRewards"],"value":[9998,9999,10000]},{"path":["displayBoxRewards"],"value":[1,2]}]},
-    {"name":"قيمة الصندوق الصفرية مرفوضة","expected":false,"changes":[{"path":["majorBoxRewards"],"value":[0,50,100]}]},
-    {"name":"قيمة الصندوق فوق الحد مرفوضة","expected":false,"changes":[{"path":["majorBoxRewards"],"value":[50,100,10001]}]},
+    {"name":"الحد الأعلى لقيمة الصندوق صالح","expected":true,"changes":[{"path":["majorBoxRewards"],"value":[9996,9997,9998,9999,10000]},{"path":["displayBoxRewards"],"value":[1,2]}]},
+    {"name":"قيمة الصندوق الصفرية مرفوضة","expected":false,"changes":[{"path":["majorBoxRewards"],"value":[0,50,100,150,200]}]},
+    {"name":"قيمة الصندوق فوق الحد مرفوضة","expected":false,"changes":[{"path":["majorBoxRewards"],"value":[50,100,150,200,10001]}]},
     {"name":"المعرّف المكرر مرفوض","expected":false,"changes":[{"path":["storeItems",1,"id"],"value":"tablet-15"}]},
     {"name":"الإجابة خارج الخيارات مرفوضة","expected":false,"changes":[{"path":["letterGames",0,"answer"],"value":"غير موجود"}]},
     {"name":"النص عند الحد بعد المسافات صالح","expected":true,"changes":[{"path":["letterGames",0,"title"],"value":{"repeat":"x","count":120}}]},
@@ -87,6 +87,6 @@
     {"name":"المسألة عند حدود الإجابة صالحة","expected":true,"changes":[{"path":["numberQuestions",0,"answer"],"value":-10000},{"path":["numberQuestions",1,"answer"],"value":10000}]},
     {"name":"الإجابة العشرية مرفوضة","expected":false,"changes":[{"path":["numberQuestions",0,"answer"],"value":9.5}]},
     {"name":"خيارات الحروف المكررة مرفوضة","expected":false,"changes":[{"path":["letterGames",0,"options"],"value":["ب","ب","م"]}]},
-    {"name":"الجائزة الكبرى لا تتجاوز التحفيز مرفوضة","expected":false,"changes":[{"path":["majorBoxRewards"],"value":[10,20,30]},{"path":["displayBoxRewards"],"value":[10,15]}]}
+    {"name":"الجائزة الكبرى لا تتجاوز التحفيز مرفوضة","expected":false,"changes":[{"path":["majorBoxRewards"],"value":[10,20,30,40,50]},{"path":["displayBoxRewards"],"value":[10,15]}]}
   ]
 }

@@ -1830,19 +1830,19 @@ function App() {
   };
 
   const openBadge = (stage: number) => {
-    if (!profile || !Number.isInteger(stage) || stage < 1 || stage > 3) return;
+     if (!profile || !Number.isInteger(stage) || stage < 1 || stage > 6) return;
     setSaved((current) => {
       const currentRewards = current.childRewards[profile.id] ?? defaultChildRewards;
       const currentPoints = current.points[profile.id] ?? 0;
-      if (currentRewards.badgeCount !== stage - 1 || currentRewards.challengePoints < 120 || currentPoints < 120) return current;
+       if (currentRewards.badgeCount !== stage - 1 || currentRewards.challengePoints < 60 || currentPoints < 60) return current;
       const nextRewards = {
         ...currentRewards,
         badgeCount: stage,
-        challengePoints: currentRewards.challengePoints - 120,
+        challengePoints: currentRewards.challengePoints - 60,
       };
       return {
         ...current,
-        points: { ...current.points, [profile.id]: currentPoints - 120 },
+        points: { ...current.points, [profile.id]: currentPoints - 60 },
         childRewards: { ...current.childRewards, [profile.id]: nextRewards },
       };
     });
@@ -1853,7 +1853,7 @@ function App() {
     if (!profile || !Number.isFinite(reward) || reward < 0 || !Number.isInteger(giftIndex)) return;
     setSaved((current) => {
       const currentRewards = current.childRewards[profile.id] ?? defaultChildRewards;
-      if (currentRewards.badgeCount < 3 || !current.childContent.majorBoxRewards.includes(reward)) return current;
+      if (currentRewards.badgeCount < 6 || !current.childContent.majorBoxRewards.includes(reward)) return current;
       return {
         ...current,
         childRewards: {
@@ -2778,11 +2778,11 @@ function ParentView({
         <div className="panel-top"><div><h2 className="panel-title">إعداد مكافآت الأطفال</h2><p className="panel-subtitle">هذه الإعدادات متاحة للوالدين فقط، وتتزامن مع متجر الأطفال على جميع الأجهزة.</p></div><ShoppingBag color="hsl(var(--primary))" /></div>
          <div className="parent-box-rewards-settings">
            <div className="parent-box-rewards-group">
-             <div><h3>هدايا اختيار الطفل</h3><p>تظهر هذه الهدايا الثلاث فقط بعد فتح الأوسمة الثلاثة، ويختار الطفل واحدة منها.</p></div>
+             <div><h3>هدايا اختيار الطفل</h3><p>هذه الهدايا الخمس هي النتائج الرابحة بعد فتح الأوسمة الستة، ويخرج السحب بواحدة منها فقط.</p></div>
              <div className="parent-box-reward-fields">{saved.childContent.majorBoxRewards.map((reward, index) => <label className="admin-field" key={`major-${index}`}><span>هدية الاختيار {index + 1} (بالريال)</span><input className="admin-input" type="number" min={1} max={10000} value={reward} onChange={(event) => onUpdateBoxReward("major", index, Number(event.target.value))} /></label>)}</div>
            </div>
            <div className="parent-box-rewards-group">
-             <div><h3>هدايا غير قابلة للاختيار</h3><p>تظل هذه الهدايا مخفية عن الطفل ولا تظهر ضمن الخيارات الثلاثة.</p></div>
+             <div><h3>هدايا مستبعدة من السحب</h3><p>تظهر هاتان الهديتان ضمن البطاقات السبع، لكن لا يمكن أن تكونا نتيجة الفوز.</p></div>
              <div className="parent-box-reward-fields">{saved.childContent.displayBoxRewards.map((reward, index) => <label className="admin-field" key={`display-${index}`}><span>هدية غير قابلة للاختيار {index + 1} (بالريال)</span><input className="admin-input" type="number" min={1} max={10000} value={reward} onChange={(event) => onUpdateBoxReward("display", index, Number(event.target.value))} /></label>)}</div>
            </div>
          </div>
