@@ -288,8 +288,15 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
   const chooseRandomGift = (boxIndex: number) => {
     if (giftStage !== "ready" || content.majorBoxRewards.length !== winningGiftCount || content.displayBoxRewards.length !== excludedGiftCount) return;
     const reward = content.majorBoxRewards[Math.floor(Math.random() * content.majorBoxRewards.length)];
+    const winningGiftCard = content.majorBoxRewards.indexOf(reward);
+    const shuffledOrder = randomGiftOrder();
+    const resultOrder = [winningGiftCard, ...shuffledOrder.filter((giftIndex) => giftIndex !== winningGiftCard)];
+    if (resultOrder.every((giftIndex, index) => giftIndex === giftOrder[index]) && resultOrder.length > 2) {
+      [resultOrder[1], resultOrder[2]] = [resultOrder[2], resultOrder[1]];
+    }
+    giftOrderRef.current = resultOrder;
     setBoxNotice(`مبارك! هديتك هي ${reward.toLocaleString("en-US")} ريال.`);
-    setGiftOrder(randomGiftOrder());
+    setGiftOrder(resultOrder);
     setGiftStage("won");
     onSelectGift(reward, boxIndex);
   };
