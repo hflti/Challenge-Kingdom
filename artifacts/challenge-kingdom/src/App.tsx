@@ -13,6 +13,7 @@ import {
   Compass,
   Crown,
   House,
+  ImagePlus,
   KeyRound,
   LockKeyhole,
   LogOut,
@@ -127,8 +128,8 @@ type SavedState = {
   customMissions: Record<ProfileId, SavedMission[]>;
   childRewards: Record<ProfileId, ChildRewardsState>;
   childContent: ChildContentConfig;
-  /** Preset IDs only: illustrated avatars are never uploaded or stored as bytes. */
   profileAvatars: Record<ProfileId, string>;
+  profilePhotos: Record<ProfileId, string>;
 };
 
 type SavedMission = {
@@ -210,6 +211,12 @@ const avatarPresets = [
 function avatarSymbol(preset: string | undefined, fallback: string) {
   return avatarPresets.find((item) => item.id === preset)?.symbol ?? fallback;
 }
+
+function AvatarVisual({ value, alt }: { value: string; alt: string }) {
+  return value.startsWith("/api/") || value.startsWith("http")
+    ? <img className="avatar-photo" src={value} alt={alt} />
+    : <>{value}</>;
+}
 const kingdomApiUrl = import.meta.env.VITE_KINGDOM_API_URL?.trim()
   || "/api/kingdom-state";
 const kingdomApiSaveMethod = "PUT";
@@ -224,6 +231,7 @@ function emptySavedState(): SavedState {
     childRewards: { ayham: defaultChildRewards, kinan: defaultChildRewards },
     childContent: defaultChildContent,
     profileAvatars: { ayham: "knight", kinan: "astronaut" },
+    profilePhotos: {},
   };
 }
 
@@ -241,6 +249,7 @@ function readSavedState(): SavedState {
       customMissions: { ...fallback.customMissions, ...(parsed.customMissions ?? {}) },
       childRewards: Object.fromEntries(Object.entries({ ...fallback.childRewards, ...(parsed.childRewards ?? {}) }).map(([id, value]) => [id, normalizeChildRewards(value)])),
       profileAvatars: { ...fallback.profileAvatars, ...(parsed.profileAvatars ?? {}) },
+      profilePhotos: { ...fallback.profilePhotos, ...(parsed.profilePhotos ?? {}) },
       childContent: normalizeChildContent(parsed.childContent),
     };
   } catch {
@@ -279,6 +288,7 @@ function toSyncedKingdomState(state: SavedState): SyncedKingdomState {
     childRewards: state.childRewards,
     childContent: state.childContent,
     profileAvatars: state.profileAvatars,
+    profilePhotos: state.profilePhotos,
   };
 }
 
@@ -297,6 +307,7 @@ function normalizeSyncedKingdomState(value: unknown): SyncedKingdomState | null 
     customMissions: Object.fromEntries(Object.entries(candidate.customMissions).map(([id, value]) => [id, Array.isArray(value) ? value as SavedMission[] : []])),
     childRewards: Object.fromEntries(Object.entries(candidate.childRewards ?? {}).map(([id, value]) => [id, normalizeChildRewards(value)])),
     profileAvatars: isProfileRecord(candidate.profileAvatars) ? Object.fromEntries(Object.entries(candidate.profileAvatars).filter(([, preset]) => typeof preset === "string")) : {},
+    profilePhotos: isProfileRecord(candidate.profilePhotos) ? Object.fromEntries(Object.entries(candidate.profilePhotos).filter(([, url]) => typeof url === "string" && url.startsWith("/api/storage/profile-images/"))) : {},
     childContent: normalizeChildContent(candidate.childContent),
   };
 }
@@ -1337,7 +1348,7 @@ function App() {
         cloudReadyRef.current = false;
       }
       else if (action === "parent") { setTab("parent"); setScreen("home"); }
-      if (action !== "switch") void pullCloudState(true);
+      if (action !== "switch" && action !== "protected-feature") void pullCloudState(true);
     } catch (cause) {
       if (isFamilySessionFailure(cause)) {
         clearMemberSession(expiredFamilySessionNotice);
@@ -1663,6 +1674,28 @@ function App() {
     }));
   };
 
+  const uploadProfilePhoto = async (profileId: ProfileId, file: File) => {
+    const token = memberTokenRef.current;
+    if (!token || memberRoleRef.current !== "owner") throw new Error("أدخل رمز المملكة من مرصد الوالدين أولاً.");
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) {
+      throw new Error("اختر صورة JPG أو PNG أو WebP بحجم لا يتجاوز 5 ميجابايت.");
+    }
+    const prepared = await fetch("/api/storage/profile-images/request-url", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-family-code": familyCode,
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ profileId, name: file.name, size: file.size, contentType: file.type }),
+    });
+    if (!prepared.ok) throw new Error("تعذر تجهيز رفع الصورة.");
+    const { uploadURL, photoUrl } = await prepared.json() as { uploadURL: string; photoUrl: string };
+    const uploaded = await fetch(uploadURL, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
+    if (!uploaded.ok) throw new Error("تعذر رفع الصورة. حاول مرة أخرى.");
+    setSaved((current) => ({ ...current, profilePhotos: { ...current.profilePhotos, [profileId]: photoUrl } }));
+  };
+
   const deleteMission = (missionId: string) => {
     if (!profile) return;
     setSaved((current) => ({
@@ -1787,7 +1820,7 @@ function App() {
   if (screen === "choose" || !selectedId || !profile) {
     return (
       <>
-        <ProfileChooser profiles={availableProfiles} profileAvatars={saved.profileAvatars} loading={membersLoading} error={membersError} onChoose={(id) => requestProfileAccess("enter", id)} onBack={logout} onLogout={logout} />
+        <ProfileChooser profiles={availableProfiles} profileAvatars={saved.profileAvatars} profilePhotos={saved.profilePhotos} loading={membersLoading} error={membersError} onChoose={(id) => requestProfileAccess("enter", id)} onBack={logout} onLogout={logout} />
         {profileAccessAction && (
           <ProfileAccessGate
             action={profileAccessAction}
@@ -1824,7 +1857,7 @@ function App() {
             </button>
           </nav>
           <div className="side-profile" data-testid="display-sidebar-profile">
-            <span className="mini-avatar" aria-label={`رمز ${activeProfile.name}`}>{avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)}</span>
+            <span className="mini-avatar" aria-label={`رمز ${activeProfile.name}`}><AvatarVisual value={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} alt={activeProfile.name} /></span>
             <div className="side-profile-copy"><strong>{activeProfile.name}</strong><span>{activeProfile.title}</span></div>
             <button className="icon-button" data-testid="button-switch-sidebar-profile" aria-label="تبديل البطل" onClick={() => requestProfileAccess("switch")}><RefreshCcw size={15} /></button>
           </div>
@@ -1844,7 +1877,7 @@ function App() {
               </span>
               <span className="date-chip" data-testid="text-today-date">{getArabicDate()}</span>
               <button className="profile-switch" data-testid="button-switch-profile" onClick={() => requestProfileAccess("switch")}>
-                <span className="mini-avatar" aria-label={`رمز ${activeProfile.name}`}>{avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)}</span>
+                <span className="mini-avatar" aria-label={`رمز ${activeProfile.name}`}><AvatarVisual value={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} alt={activeProfile.name} /></span>
                 <span>تبديل البطل</span>
                 <ChevronLeft size={14} />
               </button>
@@ -1857,11 +1890,11 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset } }))} />
+              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset }, profilePhotos: { ...current.profilePhotos, [profileId]: "" } }))} onUploadPhoto={uploadProfilePhoto} />
             ) : screen === "home" ? (
-               <HomeView profile={activeProfile} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onParent={() => requestProfileAccess("parent")} />
+               <HomeView profile={activeProfile} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onCreateMission={(...args) => requestChildUnlock(() => createMission(...args))} onDeleteMission={(missionId) => requestChildUnlock(() => deleteMission(missionId))} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onRequestUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
-              <QuestView mission={mission} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onCancelBeforeStart={newChallenge} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
+              <QuestView mission={mission} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onCancelBeforeStart={newChallenge} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
               <GateView answerResult={answerResult} completionChoice={completionChoice} onAnswer={answerMission} onComplete={completeMission} onBack={leaveMission} onCancel={cancelUnfinishedMission} />
             ) : (
@@ -1983,6 +2016,7 @@ function InstallAppButton() {
 function ProfileChooser({
   profiles: selectableProfiles,
   profileAvatars,
+  profilePhotos,
   loading,
   error,
   onChoose,
@@ -1991,6 +2025,7 @@ function ProfileChooser({
 }: {
   profiles: Profile[];
   profileAvatars: Record<ProfileId, string>;
+  profilePhotos: Record<ProfileId, string>;
   loading: boolean;
   error: string;
   onChoose: (id: ProfileId) => void;
@@ -2018,7 +2053,7 @@ function ProfileChooser({
             const Icon = item.icon;
             return (
               <button key={item.id} className="profile-card" data-testid={`button-profile-${item.id}`} onClick={() => onChoose(item.id)}>
-                <div className="profile-avatar"><span aria-hidden="true">{avatarSymbol(profileAvatars[item.id], item.initials)}</span><Icon className="profile-avatar-icon" size={47} strokeWidth={1.8} /></div>
+                <div className="profile-avatar"><span aria-hidden="true"><AvatarVisual value={profilePhotos[item.id] ?? avatarSymbol(profileAvatars[item.id], item.initials)} alt={item.name} /></span>{!profilePhotos[item.id] && <Icon className="profile-avatar-icon" size={47} strokeWidth={1.8} />}</div>
                 <h2>{item.name}</h2>
                 <div className="grade">{item.grade}</div>
                 <p className="quote">«{item.quote}»</p>
@@ -2096,6 +2131,7 @@ function HomeView({
   onSpendReward,
   onOpenRewardBox,
   onAwardExtraPoints,
+  onRequestUnlock,
   onParent,
 }: {
   profile: Profile;
@@ -2113,6 +2149,7 @@ function HomeView({
   onSpendReward: (cost: number, itemId: string) => boolean;
   onOpenRewardBox: (opening: BoxOpening) => void;
   onAwardExtraPoints: (amount: number) => void;
+  onRequestUnlock: (onUnlocked: () => void) => void;
   onParent: () => void;
 }) {
   const [taskTitle, setTaskTitle] = useState("");
@@ -2202,7 +2239,7 @@ function HomeView({
             const Icon = item.icon;
                 const isLatestCustom = item.id.startsWith("custom-") && item.id === availableMissions.at(-1)?.id;
                 const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""} ${isLatestCustom ? "latest-custom-mission" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={Boolean(activeMission && activeMission.id !== item.id)}>
-                 <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span><span className="card-avatar" aria-label={`رمز ${profile.name}`}>{avatar}</span></div>
+                 <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span><span className="card-avatar" aria-label={`رمز ${profile.name}`}><AvatarVisual value={avatar} alt={profile.name} /></span></div>
                   <h3>{item.title}</h3><p>{item.description}</p>{item.rewardPoints && <span className="mission-reward">مكافأة {item.rewardPoints.toLocaleString("ar-SA")} نقطة</span>}<ArrowLeft className="mission-arrow" size={18} />
                </button>;
                return item.id.startsWith("custom-") ? <div className="mission-card-wrap" key={item.id}>{missionCard}<button type="button" className="delete-mission" aria-label={`حذف مهمة ${item.title}`} data-testid={`button-delete-mission-${item.id}`} onClick={() => onDeleteMission(item.id)}><CircleX size={15} /> حذف</button></div> : missionCard;
@@ -2229,7 +2266,7 @@ function HomeView({
             </div>}
         </div>
       </section>
-      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} />
+      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onRequestUnlock={onRequestUnlock} />
     </>
   );
 }
@@ -2299,7 +2336,7 @@ function QuestView({
       <div className="quest-header"><button className="back-button" data-testid="button-back-to-missions" aria-label="العودة للمهام" onClick={onBack}><ArrowLeft size={18} /></button><div><div className="eyebrow">ميدان التحدي</div><p className="subtle">أثبت أن تركيزك أقوى من الملل.</p></div></div>
       <div className="quest-layout">
         <section className="quest-card" data-testid="panel-active-quest">
-          <div className="eyebrow"><Icon size={14} /> المهمة النشطة <span className="card-avatar quest-avatar" aria-label="رمز البطل">{avatar}</span></div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
+          <div className="eyebrow"><Icon size={14} /> المهمة النشطة <span className="card-avatar quest-avatar" aria-label="رمز البطل"><AvatarVisual value={avatar} alt="البطل" /></span></div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
            <div className={`timer-shell ${running ? "running" : ""} ${pauseActive ? "paused" : ""} ${alertSeconds > 0 ? "alerting" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{timeUp && alertSeconds === 0 && graceSeconds > 0 ? formatTime(graceSeconds) : formatTime(seconds)}</span><span className="timer-label">{pauseActive ? `استراحة ${formatTime(pauseSeconds)}` : alertSeconds > 0 ? `تنبيه النهاية ${formatTime(alertSeconds)}` : timeUp && graceSeconds > 0 ? "مهلة القرار" : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
            <div className="quest-actions">
                {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume} disabled={resumeWaitSeconds > 0}><Play size={16} /> {resumeWaitSeconds > 0 ? `انتظر ${resumeWaitSeconds} ثوانٍ` : "استئناف التحدي"}</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <><button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>{!timeUp && <button className="outline-button cancel-before-start" type="button" data-testid="button-cancel-before-start" onClick={onCancelBeforeStart}><CircleX size={16} /> إلغاء قبل البدء</button>}</>}
@@ -2438,6 +2475,7 @@ function ParentView({
   onSoundPreferencesChange,
   onChooseProfile,
   onChooseAvatar,
+  onUploadPhoto,
 }: {
   profiles: Profile[];
   saved: SavedState;
@@ -2445,18 +2483,20 @@ function ParentView({
   onSoundPreferencesChange: (preferences: SoundPreferences) => void;
   onChooseProfile: () => void;
   onChooseAvatar: (profileId: ProfileId, preset: string) => void;
+  onUploadPhoto: (profileId: ProfileId, file: File) => Promise<void>;
 }) {
   const total = dynamicProfiles.reduce((sum, item) => sum + (saved.completed[item.id] ?? 0), 0);
+  const [uploadStatus, setUploadStatus] = useState<Record<ProfileId, string>>({});
   return (
     <section className="parent-view">
       <div className="parent-banner"><div><div className="eyebrow">مرصد الوالدين • {getArabicDate()}</div><h1>غرفة القيادة العائلية</h1><p>ملخص لطيف لما أنجزه الأبطال اليوم، من دون تحويل الرحلة إلى جدول درجات.</p></div><div className="parent-total" data-testid="display-family-total"><strong>{total}</strong><span>مهمة في دفتر العائلة</span></div></div>
       <section className="avatar-picker panel" data-testid="panel-avatar-picker">
-        <h2 className="panel-title">رموز الأبطال</h2><p className="panel-subtitle">اختاروا شخصية مرحة لكل طفل. نحفظ اسم الرمز فقط، لا صوراً مرفوعة.</p>
-        <div className="avatar-picker-children">{dynamicProfiles.map((child) => <div className="avatar-picker-child" key={child.id}><strong>{child.name}</strong><div className="avatar-preset-list">{avatarPresets.map((preset) => <button key={preset.id} type="button" className={`avatar-preset ${saved.profileAvatars[child.id] === preset.id ? "selected" : ""}`} aria-label={`${preset.label} لـ${child.name}`} aria-pressed={saved.profileAvatars[child.id] === preset.id} onClick={() => onChooseAvatar(child.id, preset.id)}><span>{preset.symbol}</span><small>{preset.label}</small></button>)}</div></div>)}</div>
+        <h2 className="panel-title">صور الأبطال</h2><p className="panel-subtitle">ارفعوا صورة الطفل من الهاتف أو اختاروا رمزاً جاهزاً. تتزامن الصورة مع أجهزة العائلة.</p>
+        <div className="avatar-picker-children">{dynamicProfiles.map((child) => <div className="avatar-picker-child" key={child.id}><strong>{child.name}</strong><span className="profile-photo-preview"><AvatarVisual value={saved.profilePhotos[child.id] ?? avatarSymbol(saved.profileAvatars[child.id], child.initials)} alt={child.name} /></span><label className="outline-button avatar-upload-button"><ImagePlus size={15} /> رفع صورة<input type="file" accept="image/jpeg,image/png,image/webp" onChange={async (event) => { const input = event.currentTarget; const file = input.files?.[0]; if (!file) return; setUploadStatus((current) => ({ ...current, [child.id]: "جارٍ رفع الصورة…" })); try { await onUploadPhoto(child.id, file); setUploadStatus((current) => ({ ...current, [child.id]: "تم حفظ الصورة ومزامنتها." })); } catch (error) { setUploadStatus((current) => ({ ...current, [child.id]: error instanceof Error ? error.message : "تعذر رفع الصورة." })); } input.value = ""; }} /></label>{uploadStatus[child.id] && <small className="avatar-upload-status">{uploadStatus[child.id]}</small>}<div className="avatar-preset-list">{avatarPresets.map((preset) => <button key={preset.id} type="button" className={`avatar-preset ${!saved.profilePhotos[child.id] && saved.profileAvatars[child.id] === preset.id ? "selected" : ""}`} aria-label={`${preset.label} لـ${child.name}`} aria-pressed={!saved.profilePhotos[child.id] && saved.profileAvatars[child.id] === preset.id} onClick={() => onChooseAvatar(child.id, preset.id)}><span>{preset.symbol}</span><small>{preset.label}</small></button>)}</div></div>)}</div>
       </section>
       <div className="parent-grid">
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">نبض الأبطال</h2><p className="panel-subtitle">هذا الأسبوع حتى الآن</p></div><Trophy color="hsl(var(--accent))" /></div><div className="child-progress">
-          {dynamicProfiles.length === 0 ? <p className="subtle">لا توجد ملفات أطفال.</p> : dynamicProfiles.map((child) => <div className="child-progress-row" key={child.id}><span className="mini-avatar" aria-label={`رمز ${child.name}`}>{avatarSymbol(saved.profileAvatars[child.id], child.initials)}</span><div className="child-progress-copy"><strong>{child.name}</strong><span>{saved.completed[child.id] ?? 0} مهام مكتملة • {(saved.points[child.id] ?? 0).toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, ((saved.points[child.id] ?? 0) / mapTotalPoints) * 100)}%` }} /></div></div></div>)}
+          {dynamicProfiles.length === 0 ? <p className="subtle">لا توجد ملفات أطفال.</p> : dynamicProfiles.map((child) => <div className="child-progress-row" key={child.id}><span className="mini-avatar" aria-label={`رمز ${child.name}`}><AvatarVisual value={saved.profilePhotos[child.id] ?? avatarSymbol(saved.profileAvatars[child.id], child.initials)} alt={child.name} /></span><div className="child-progress-copy"><strong>{child.name}</strong><span>{saved.completed[child.id] ?? 0} مهام مكتملة • {(saved.points[child.id] ?? 0).toLocaleString("ar-SA")} / {mapTotalPoints} نقطة</span><div className="progress-small"><i style={{ width: `${Math.min(100, ((saved.points[child.id] ?? 0) / mapTotalPoints) * 100)}%` }} /></div></div></div>)}
         </div><button className="outline-button" data-testid="button-switch-from-parent" onClick={onChooseProfile} style={{ width: "100%", marginTop: 24 }}><Users size={15} /> تبديل ملف البطل</button></div>
         <div className="panel"><div className="panel-top"><div><h2 className="panel-title">سجل اليوم</h2><p className="panel-subtitle">محطات صغيرة تصنع عادة كبيرة.</p></div><ChartNoAxesColumnIncreasing color="hsl(var(--primary))" /></div><div className="timeline">
           <div className="timeline-item"><span className="timeline-icon"><Check size={14} /></span><div className="timeline-copy"><strong>تم تجهيز الرحلة</strong><p>الحقيبة جاهزة والأدوات في مكانها.</p></div></div>

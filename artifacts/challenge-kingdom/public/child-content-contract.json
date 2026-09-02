@@ -17,7 +17,7 @@
     "numberAnswerMax": 10000,
     "readingStoryIdMaxLength": 80,
     "readingStoryTitleMaxLength": 120,
-    "readingStoryTextMaxLength": 2500,
+    "readingStoryTextMaxLength": 10000,
     "storeItemIdMaxLength": 80,
     "storeItemTitleMaxLength": 160,
     "storeCostMin": 5,

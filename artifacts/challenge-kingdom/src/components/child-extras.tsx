@@ -1,60 +1,155 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BookOpen, Check, CircleHelp, Gift, Gamepad2, LockKeyhole, Medal, Pause, ShoppingBag, Sparkles, Star, Volume2 } from "lucide-react";
-import { defaultChildContent, type ChildContentConfig, type StoreItemContent } from "../lib/child-content";
+import { Award, BookOpen, Box, Check, Gamepad2, Hash, ShoppingBag, Sparkles, Volume2, X } from "lucide-react";
+import type { ChildContentConfig, LetterGameContent, NumberQuestionContent, StoreItemContent } from "../lib/child-content";
 
-export type BoxOpening = { boxIndex: number; majorReward: number; selectedMajorIndex: number };
+export type BoxOpening = { boxIndex: number; reward: number };
 export type ChildRewardsState = { purchasedIds: string[]; openedBoxes: BoxOpening[]; lifetimePoints: number };
 export const defaultChildRewards: ChildRewardsState = { purchasedIds: [], openedBoxes: [], lifetimePoints: 0 };
-export function normalizeChildRewards(value: unknown): ChildRewardsState {
-  if (!value || typeof value !== "object") return defaultChildRewards;
-  const item = value as Partial<ChildRewardsState>;
-  return { purchasedIds: Array.isArray(item.purchasedIds) ? item.purchasedIds.filter((id): id is string => typeof id === "string") : [], openedBoxes: Array.isArray(item.openedBoxes) ? item.openedBoxes.filter((box): box is BoxOpening => Boolean(box && typeof box === "object" && Number.isInteger((box as BoxOpening).boxIndex) && Number.isInteger((box as BoxOpening).majorReward) && Number.isInteger((box as BoxOpening).selectedMajorIndex))) : [], lifetimePoints: typeof item.lifetimePoints === "number" && Number.isFinite(item.lifetimePoints) ? Math.max(0, Math.floor(item.lifetimePoints)) : 0 };
-}
-type Props = { content?: ChildContentConfig; points: number; rewards: ChildRewardsState; onSpend: (cost: number, itemId: string) => boolean; onOpenBox: (opening: BoxOpening) => void; onAwardPoints: (amount: number) => void; childName?: string; childAvatar?: string };
-const rewardIcon = (item: StoreItemContent) => item.kind === "money" ? Star : item.kind === "game" || item.kind === "screen" ? Gamepad2 : Gift;
 
-export function ChildExtras({ content = defaultChildContent, points, rewards, onSpend, onOpenBox, onAwardPoints, childName = "", childAvatar }: Props) {
-  const [activePanel, setActivePanel] = useState<"reading" | "store" | "badges" | null>(null);
-  const [readingIndex, setReadingIndex] = useState(0); const [readingOpen, setReadingOpen] = useState(false); const [readingCompleted, setReadingCompleted] = useState<Set<string>>(new Set()); const [readingMessage, setReadingMessage] = useState(""); const [readingPausedUntil, setReadingPausedUntil] = useState(0); const [, setReaderTick] = useState(0); const [spokenWords, setSpokenWords] = useState(0); const [boxNotice, setBoxNotice] = useState("");
-  const readingRef = useRef<HTMLDivElement>(null);
-  const lifetimePoints = Math.max(points, rewards.lifetimePoints); const badgeCount = Math.floor(lifetimePoints / 120); const unlockedBoxes = Math.min(5, Math.floor(badgeCount / 3));
-  const story = content.readingStories[readingIndex] ?? content.readingStories[0]; const pauseRemaining = Math.max(0, Math.ceil((readingPausedUntil - Date.now()) / 1000));
+export function normalizeChildRewards(value: unknown): ChildRewardsState {
+  if (!value || typeof value !== "object") return { ...defaultChildRewards };
+  const item = value as Partial<ChildRewardsState>;
+  return {
+    purchasedIds: Array.isArray(item.purchasedIds) ? item.purchasedIds.filter((id): id is string => typeof id === "string") : [],
+    openedBoxes: Array.isArray(item.openedBoxes) ? item.openedBoxes.filter((entry): entry is BoxOpening => Boolean(entry && typeof entry === "object" && Number.isInteger((entry as BoxOpening).boxIndex) && Number.isFinite((entry as BoxOpening).reward))) : [],
+    lifetimePoints: typeof item.lifetimePoints === "number" ? Math.max(0, item.lifetimePoints) : 0,
+  };
+}
+
+type Panel = "games" | "reading" | "store" | "badges";
+
+function Avatar({ value, name }: { value: string; name: string }) {
+  return value.startsWith("/api/") || value.startsWith("http") ? <img className="avatar-photo" src={value} alt={name} /> : <>{value}</>;
+}
+
+function rewardIcon(item: StoreItemContent) {
+  return item.kind === "game" ? Gamepad2 : item.kind === "screen" ? Sparkles : item.kind === "money" ? Award : ShoppingBag;
+}
+
+export function ChildExtras({ content, points, rewards, childName, childAvatar, onSpend, onOpenBox, onAwardPoints, onRequestUnlock }: {
+  content: ChildContentConfig;
+  points: number;
+  rewards: ChildRewardsState;
+  childName: string;
+  childAvatar: string;
+  onSpend: (cost: number, itemId: string) => boolean;
+  onOpenBox: (opening: BoxOpening) => void;
+  onAwardPoints: (amount: number) => void;
+  onRequestUnlock: (onUnlocked: () => void) => void;
+}) {
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const [gameKind, setGameKind] = useState<"letters" | "numbers">("letters");
+  const [gameIndex, setGameIndex] = useState(0);
+  const [gameMessage, setGameMessage] = useState("");
+  const [numberAnswer, setNumberAnswer] = useState("");
+  const [answered, setAnswered] = useState(false);
+  const [storyIndex, setStoryIndex] = useState<number | null>(null);
+  const [spokenWords, setSpokenWords] = useState(0);
+  const [boxNotice, setBoxNotice] = useState("");
+  const readerRef = useRef<HTMLDivElement>(null);
+
+  const openProtected = (next: Panel) => onRequestUnlock(() => {
+    setPanel(next);
+    setGameMessage("");
+    setAnswered(false);
+    setStoryIndex(null);
+    setSpokenWords(0);
+  });
+
   useEffect(() => {
-    if (!readingOpen || readingPausedUntil > Date.now()) return;
-    let animationFrame = 0;
-    let previousTime: number | undefined;
-    const rise = (time: number) => {
-      if (previousTime !== undefined && readingRef.current) {
-          const maxScroll = readingRef.current.scrollHeight - readingRef.current.clientHeight;
-          const nextScroll = readingRef.current.scrollTop + (time - previousTime) * 0.008;
-          readingRef.current.scrollTop = nextScroll >= maxScroll ? 0 : nextScroll;
-      }
-      previousTime = time;
-      animationFrame = window.requestAnimationFrame(rise);
+    if (panel !== "reading" || storyIndex === null) return;
+    const element = readerRef.current;
+    if (!element) return;
+    element.scrollTop = 0;
+    let frame = 0;
+    let last = performance.now();
+    const animate = (now: number) => {
+      const max = element.scrollHeight - element.clientHeight;
+      if (element.scrollTop < max) element.scrollTop = Math.min(max, element.scrollTop + (now - last) * 0.018);
+      last = now;
+      frame = requestAnimationFrame(animate);
     };
-    animationFrame = window.requestAnimationFrame(rise);
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [readingOpen, readingPausedUntil]);
-  useEffect(() => { if (!readingOpen || readingPausedUntil <= Date.now()) return; const timer = window.setInterval(() => { setReaderTick((value) => value + 1); if (readingPausedUntil <= Date.now()) setReadingPausedUntil(0); }, 250); return () => window.clearInterval(timer); }, [readingOpen, readingPausedUntil]);
-  const openPanel = (panel: NonNullable<typeof activePanel>) => setActivePanel(panel);
-  const openReading = (index: number) => { setReadingIndex(index); setReadingOpen(true); setSpokenWords(0); setReadingPausedUntil(0); setReadingMessage(""); window.setTimeout(() => { if (readingRef.current) readingRef.current.scrollTop = 0; }, 0); };
-  const speakWord = (word: string) => { if (spokenWords >= 20 || !("speechSynthesis" in window)) return; const utterance = new SpeechSynthesisUtterance(word.replace(/[،.؟]/g, "")); utterance.lang = "ar-SA"; utterance.rate = .75; window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance); setSpokenWords((value) => value + 1); };
-  const completeReading = () => { if (readingCompleted.has(story.id)) return setReadingMessage("أنهيت هذه القصة في هذه الجلسة بالفعل."); onAwardPoints(content.pointRewards.readingStory); setReadingCompleted((current) => new Set(current).add(story.id)); setReadingMessage(`أحسنت القراءة! حصلت على ${content.pointRewards.readingStory} نقاط.`); };
-  const purchase = (itemId: string, cost: number) => { if (!rewards.purchasedIds.includes(itemId)) { if (!onSpend(cost, itemId)) setBoxNotice("تحتاج إلى نقاط أكثر لشراء هذه المكافأة."); else setBoxNotice("تم حفظ المكافأة في سجل ولي الأمر."); } };
-  const openBox = (boxIndex: number) => { if (boxIndex >= unlockedBoxes || rewards.openedBoxes.some((item) => item.boxIndex === boxIndex)) return; const selectedMajorIndex = Math.floor(Math.random() * content.majorBoxRewards.length); const majorReward = content.majorBoxRewards[selectedMajorIndex]; onOpenBox({ boxIndex, majorReward, selectedMajorIndex }); setBoxNotice(`فتحت الصندوق وفزت بـ ${majorReward} ريال!`); };
-  const readerWords = useMemo(() => story.text.split(/(\s+)/).filter(Boolean), [story.text]);
-  const renderWord = (word: string) => Array.from(word).map((character, index) => <span className={/[\u064B-\u065F\u0670]/.test(character) ? "reader-diacritic" : "reader-base-letter"} key={`${character}-${index}`}>{character}</span>);
-  const avatar = childAvatar || childName.trim().slice(0, 1) || "ب";
-  return <section className="child-extras section-block" data-testid="panel-child-extras"><div className="section-heading"><div><h2>ساحة البطل</h2><p>ألعاب تعليمية ومكافآت إضافية بجانب تحديات المملكة.</p></div><span className="eyebrow"><Sparkles size={14} /> ميزات ملف الطفل</span></div>
-    <div className="child-extras-grid">
-      <button className="extra-feature-card reading-card" data-testid="button-open-reading-speed" onClick={() => openPanel("reading")}><span className="extra-feature-icon"><BookOpen size={23} /></span><strong>القراءة السريعة</strong><span>قصص مشكولة مع تمرير هادئ ونطق الكلمات.</span></button>
-      <button className="extra-feature-card store-card" data-testid="button-open-reward-store" onClick={() => openPanel("store")}><span className="extra-feature-icon"><ShoppingBag size={23} /></span><strong>متجر المكافآت</strong><span>حوّل نقاطك إلى مكافآت يراجعها ولي الأمر.</span></button>
-      <button className="extra-feature-card badges-card" data-testid="button-open-badges" onClick={() => openPanel("badges")}><span className="extra-feature-icon"><Medal size={23} /></span><strong>أوسمتي وصناديقي</strong><span>{badgeCount} وسام • {unlockedBoxes} من 5 صناديق مفتوحة</span><em>تقدم البطل <Star size={13} /></em></button>
-    </div>
-    {activePanel && createPortal(<div className="child-extras-overlay" role="dialog" aria-modal="true"><div className="child-extras-modal"><button className="icon-button child-extras-close" aria-label="إغلاق" onClick={() => setActivePanel(null)}>×</button>
-      {activePanel === "reading" && <div data-testid="panel-reading-speed"><div className="extras-modal-heading"><BookOpen size={25} /><div><div className="eyebrow">القراءة السريعة</div><h2>اقرأ بهدوء وسرعة</h2></div></div>{!readingOpen ? <div className="story-grid">{content.readingStories.map((item, index) => <button key={item.id} onClick={() => openReading(index)}><BookOpen size={18} /><strong>{item.title}</strong><span>قصة مشكولة بالكامل</span></button>)}</div> : <div className="reader-stage"><div className="reader-toolbar"><button className="outline-button" onClick={() => setReadingOpen(false)}>كل القصص</button><span>نطق الكلمات: {spokenWords} / 20</span><button className="primary-button gold" onClick={() => setReadingPausedUntil(Date.now() + 10000)} disabled={pauseRemaining > 0}>{pauseRemaining > 0 ? `متوقف ${pauseRemaining} ث` : <><Pause size={15} /> إيقاف 10 ثوانٍ</>}</button></div><h3>{story.title}</h3><div className="reader-text reader-text-cairo" ref={readingRef}>{readerWords.map((word, index) => /\s/.test(word) ? word : <button key={`${word}-${index}`} className="reader-word" onClick={() => speakWord(word)} disabled={spokenWords >= 20}>{renderWord(word)}</button>)}</div><button className="primary-button gold complete-reading-button" disabled={readingCompleted.has(story.id)} onClick={completeReading}><Check size={16} /> {readingCompleted.has(story.id) ? "تم إكمال القصة" : `أكملت القراءة (+${content.pointRewards.readingStory})`}</button>{readingMessage && <p className="game-message">{readingMessage}</p>}<p className="reader-note"><Volume2 size={14} /> اضغط على الكلمات لسماع النطق. بقي لك {20 - spokenWords} كلمة.</p></div>}</div>}
-      {activePanel === "store" && <div data-testid="panel-reward-store"><div className="extras-modal-heading"><ShoppingBag size={25} /><div><div className="eyebrow">متجر المكافآت</div><h2>ماذا تشتري بنقاطك؟</h2></div><strong className="store-balance">{points} نقطة</strong></div><div className="store-items-grid">{content.storeItems.map((item) => { const Icon = rewardIcon(item); const purchased = rewards.purchasedIds.includes(item.id); return <div className={`store-item ${purchased ? "purchased" : ""}`} key={item.id}><span className="store-child-avatar">{avatar}</span><span className="store-item-icon"><Icon size={19} /></span><strong>{item.title}</strong><span className="store-cost">{item.cost} نقطة</span><button className={purchased ? "outline-button" : "primary-button gold"} disabled={purchased || points < item.cost} onClick={() => purchase(item.id, item.cost)}>{purchased ? <><Check size={14} /> تم الطلب</> : "استبدال"}</button></div>; })}</div>{boxNotice && <p className="game-message">{boxNotice}</p>}</div>}
-      {activePanel === "badges" && <div data-testid="panel-badges"><div className="extras-modal-heading"><Medal size={25} /><div><div className="eyebrow">رحلة الأوسمة</div><h2>كل 120 نقطة وسام جديد</h2></div></div><div className="badge-progress-list">{[0, 1, 2].map((index) => { const target = (index + 1) * 120; const progress = Math.min(100, Math.max(0, lifetimePoints - index * 120) / 120 * 100); return <div className="badge-progress-item" key={target}><Medal size={28} /><div><strong>الوسام {index + 1} — {target} نقطة</strong><span>{Math.round(progress)}%</span><div className="badge-track"><i style={{ width: `${progress}%` }} /></div></div></div>; })}</div><div className="mystery-boxes">{Array.from({ length: 5 }, (_, index) => { const opening = rewards.openedBoxes.find((item) => item.boxIndex === index); const available = index < unlockedBoxes; return <button key={index} className={`mystery-box ${available ? "available" : ""} ${opening ? "opened" : ""}`} disabled={!available || Boolean(opening)} onClick={() => openBox(index)}>{opening ? <><Gift size={25} /><strong>{opening.majorReward} ريال</strong></> : <><Gift size={25} /><strong>{available ? "افتحني" : <LockKeyhole size={18} />}</strong><span>الصندوق {index + 1}</span></>}</button>; })}</div>{rewards.openedBoxes.length > 0 && <div className="box-reveal-note"><CircleHelp size={16} /><span>الجوائز الكبرى المتاحة عشوائياً: {content.majorBoxRewards.join(" أو ")} ريال.</span></div>}</div>}
-    </div></div>, document.body)}</section>;
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [panel, storyIndex]);
+
+  const nextQuestion = () => {
+    const length = gameKind === "letters" ? content.letterGames.length : content.numberQuestions.length;
+    setGameIndex((current) => (current + 1) % Math.max(1, length));
+    setGameMessage("");
+    setNumberAnswer("");
+    setAnswered(false);
+  };
+
+  const answerLetter = (game: LetterGameContent, answer: string) => {
+    if (answered) return;
+    const correct = answer === game.answer;
+    setAnswered(correct);
+    setGameMessage(correct ? "إجابة صحيحة! حصلت على نقطتين." : "حاول مرة أخرى.");
+    if (correct) onAwardPoints(2);
+  };
+
+  const answerNumber = (game: NumberQuestionContent) => {
+    if (answered) return;
+    const correct = Number(numberAnswer) === game.answer;
+    setAnswered(correct);
+    setGameMessage(correct ? "إجابة صحيحة! حصلت على نقطتين." : "راجع المسألة وحاول مرة أخرى.");
+    if (correct) onAwardPoints(2);
+  };
+
+  const speakWord = (word: string) => {
+    if (spokenWords >= 20 || !("speechSynthesis" in window)) return;
+    speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(word.replace(/[\u064B-\u065F\u0670]/g, ""));
+    utterance.lang = "ar-SA";
+    utterance.rate = 0.75;
+    speechSynthesis.speak(utterance);
+    setSpokenWords((count) => count + 1);
+  };
+
+  const renderWord = (word: string, index: number) => (
+    <button key={`${word}-${index}`} className="reader-word" onClick={() => speakWord(word)}>
+      {Array.from(word).map((character, characterIndex) => /[\u064B-\u065F\u0670]/.test(character)
+        ? <span className="reader-diacritic" key={characterIndex}>{character}</span>
+        : <span className="reader-base-letter" key={characterIndex}>{character}</span>)}
+    </button>
+  );
+
+  const modal = panel ? createPortal(
+    <div className="child-extras-overlay" role="presentation">
+      <section className="child-extras-modal" role="dialog" aria-modal="true">
+        <button className="child-extras-close" aria-label="إغلاق" onClick={() => setPanel(null)}><X /></button>
+        {panel === "games" && (() => {
+          const letterGame = content.letterGames[gameIndex % Math.max(1, content.letterGames.length)];
+          const numberGame = content.numberQuestions[gameIndex % Math.max(1, content.numberQuestions.length)];
+          return <div>
+            <div className="extras-modal-heading"><Gamepad2 size={25} /><div><div className="eyebrow">ألعاب تعليمية</div><h2>الحروف والأرقام</h2></div></div>
+            <div className="game-mode-tabs"><button className={gameKind === "letters" ? "selected" : ""} onClick={() => { setGameKind("letters"); setGameIndex(0); setGameMessage(""); setAnswered(false); }}>لعبة الحروف</button><button className={gameKind === "numbers" ? "selected" : ""} onClick={() => { setGameKind("numbers"); setGameIndex(0); setGameMessage(""); setAnswered(false); }}>لعبة الأرقام</button></div>
+            {gameKind === "letters" && letterGame ? <div className="letter-game-stage"><span className="game-stage-label">اختر الإجابة الصحيحة</span><h3>{letterGame.question}</h3><p>{letterGame.description}</p><div className="answer-option-grid">{letterGame.options.map((option) => <button key={option} onClick={() => answerLetter(letterGame, option)}>{option}</button>)}</div></div> : null}
+            {gameKind === "numbers" && numberGame ? <div className="number-question"><span>حل المسألة</span><strong>{numberGame.prompt}</strong><div className="number-answer-row"><input inputMode="numeric" value={numberAnswer} onChange={(event) => setNumberAnswer(event.target.value.replace(/\D/g, ""))} /><button className="primary-button" onClick={() => answerNumber(numberGame)}>تحقق</button></div></div> : null}
+            {gameMessage && <p className="game-message">{gameMessage}</p>}
+            {answered && <button className="outline-button next-game-button" onClick={nextQuestion}>السؤال التالي</button>}
+          </div>;
+        })()}
+        {panel === "reading" && <div>
+          <div className="extras-modal-heading"><BookOpen size={25} /><div><div className="eyebrow">القراءة السريعة</div><h2>قصص المملكة</h2></div></div>
+          {storyIndex === null ? <div className="story-grid">{content.readingStories.map((story, index) => <button key={story.id} onClick={() => setStoryIndex(index)}><strong>{story.title}</strong><span>قصة عربية مشكولة للقراءة الهادئة.</span></button>)}</div> : <div className="reader-stage"><div className="reader-toolbar"><button className="outline-button" onClick={() => setStoryIndex(null)}>القصص</button><span><Volume2 size={14} /> {spokenWords}/20 كلمة منطوقة</span></div><h3>{content.readingStories[storyIndex]?.title}</h3><div className="reader-text" ref={readerRef}><div className="reader-flow">{content.readingStories[storyIndex]?.text.split(/\s+/).map(renderWord)}</div></div><p className="reader-note">تبدأ القصة من الأسفل وتتحرك بهدوء إلى الأعلى. اضغط أي كلمة لسماعها.</p></div>}
+        </div>}
+        {panel === "store" && <div><div className="extras-modal-heading"><ShoppingBag size={25} /><div><div className="eyebrow">متجر المكافآت</div><h2>ماذا تشتري بنقاطك؟</h2></div><strong className="store-balance">{points} نقطة</strong></div><div className="store-items-grid">{content.storeItems.map((item) => { const Icon = rewardIcon(item); const purchased = rewards.purchasedIds.includes(item.id); return <div className={`store-item ${purchased ? "purchased" : ""}`} key={item.id}><span className="store-child-avatar"><Avatar value={childAvatar} name={childName} /></span><span className="store-item-icon"><Icon size={19} /></span><strong>{item.title}</strong><span className="store-cost">{item.cost} نقطة</span><button className={purchased ? "outline-button" : "primary-button gold"} disabled={purchased || points < item.cost} onClick={() => { if (onSpend(item.cost, item.id)) setBoxNotice(`تم طلب ${item.title}.`); }}>{purchased ? <><Check size={14} /> تم الطلب</> : "استبدال"}</button></div>; })}</div>{boxNotice && <p className="game-message">{boxNotice}</p>}</div>}
+        {panel === "badges" && <div><div className="extras-modal-heading"><Award size={25} /><div><div className="eyebrow">الأوسمة والصناديق</div><h2>كنوز {childName}</h2></div></div><div className="badge-progress"><div className="badge-count"><strong>{Math.floor(rewards.lifetimePoints / 50)}</strong><span>وساماً</span></div><div><strong>كل 50 نقطة تفتح وساماً</strong><p>اجمع النقاط بإنجاز المهام والألعاب.</p><div className="badge-track"><i style={{ width: `${rewards.lifetimePoints % 50 * 2}%` }} /></div></div></div><div className="mystery-boxes">{[1, 2, 3, 4, 5].map((boxIndex) => { const opened = rewards.openedBoxes.some((item) => item.boxIndex === boxIndex); const available = rewards.lifetimePoints >= boxIndex * 100; const reward = content.displayBoxRewards[(boxIndex - 1) % content.displayBoxRewards.length] ?? 10; return <button className={`mystery-box ${opened ? "opened" : available ? "available" : ""}`} disabled={!available || opened} key={boxIndex} onClick={() => onOpenBox({ boxIndex, reward })}><Box size={28} /><strong>{opened ? "مفتوح" : `صندوق ${boxIndex}`}</strong><span>{available ? "اضغط للفتح" : `${boxIndex * 100} نقطة`}</span></button>; })}</div></div>}
+      </section>
+    </div>,
+    document.body,
+  ) : null;
+
+  return <>
+    <section className="child-extras-grid">
+      <button className="extra-feature-card protected-feature-card" onClick={() => openProtected("games")}><span className="extra-feature-icon"><Gamepad2 /></span><strong>ألعاب الحروف والأرقام</strong><span>تدريب قصير وممتع مخصص للعائلة.</span><em>افتح بالرمز</em></button>
+      <button className="extra-feature-card reading-card protected-feature-card" onClick={() => openProtected("reading")}><span className="extra-feature-icon"><BookOpen /></span><strong>القراءة السريعة</strong><span>قصص مشكولة تتحرك من الأسفل للأعلى.</span><em>افتح بالرمز</em></button>
+      <button className="extra-feature-card store-card protected-feature-card" onClick={() => openProtected("store")}><span className="extra-feature-icon"><ShoppingBag /></span><strong>متجر المكافآت</strong><span>استبدل نقاطك بمكافآت العائلة.</span><em>افتح بالرمز</em></button>
+      <button className="extra-feature-card badges-card protected-feature-card" onClick={() => openProtected("badges")}><span className="extra-feature-icon"><Award /></span><strong>الأوسمة والصناديق</strong><span>تابع كنوزك وافتح الصناديق.</span><em>افتح بالرمز</em></button>
+    </section>
+    {modal}
+  </>;
 }

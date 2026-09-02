@@ -1,4 +1,5 @@
 import contract from "../../public/child-content-contract.json";
+import fullyVocalizedStoriesSource from "../../../../attached_assets/Pasted---1788326937780_1788326937781.txt?raw";
 
 const rules = contract.rules;
 const legacyDefaultReadingStoryIds = [
@@ -9,6 +10,24 @@ const legacyDefaultReadingStoryIds = [
   "busy-bee",
   "golden-key",
 ] as const;
+
+function bundledVocalizedStories(): ReadingStoryContent[] {
+  const sections: Array<{ title: string; lines: string[] }> = [];
+  for (const rawLine of fullyVocalizedStoriesSource.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const heading = line.match(/^\d+\.\s+(.+)$/);
+    if (heading) {
+      sections.push({ title: heading[1].trim(), lines: [] });
+    } else if (line && sections.length > 0) {
+      sections[sections.length - 1].lines.push(line);
+    }
+  }
+  return contract.baseContent.readingStories.map((story, index) => ({
+    id: story.id,
+    title: sections[index]?.title ?? story.title,
+    text: sections[index]?.lines.join("\n\n") || story.text,
+  }));
+}
 
 export type LetterGameContent = {
   id: string;
@@ -73,7 +92,7 @@ export const defaultChildContent: ChildContentConfig = {
     { id: "numbers-5", prompt: "12 + 8", answer: 20 },
   ],
   readingStories: [
-    ...contract.baseContent.readingStories,
+    ...bundledVocalizedStories(),
   ],
   storeItems: [
     { id: "tablet-15", title: "استخدام الآيباد 15 دقيقة", cost: 15, kind: "screen" },
@@ -122,6 +141,14 @@ function hasLegacyDefaultReadingStories(value: unknown): boolean {
   const ids = value.map((item) => item && typeof item === "object" ? (item as ReadingStoryContent).id : null);
   return new Set(ids).size === legacyDefaultReadingStoryIds.length
     && legacyDefaultReadingStoryIds.every((id) => ids.includes(id));
+}
+
+function hasPreviousBundledReadingStories(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length !== contract.baseContent.readingStories.length) return false;
+  return contract.baseContent.readingStories.every((story, index) => {
+    const candidate = value[index] as Partial<ReadingStoryContent> | undefined;
+    return candidate?.id === story.id && candidate?.title === story.title && candidate?.text === story.text;
+  });
 }
 
 export function validateChildContent(value: unknown): ChildContentValidation {
@@ -223,7 +250,7 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
       };
     })
     : defaultChildContent.numberQuestions;
-  const readingStories = hasLegacyDefaultReadingStories(candidate.readingStories)
+  const readingStories = hasLegacyDefaultReadingStories(candidate.readingStories) || hasPreviousBundledReadingStories(candidate.readingStories)
     ? defaultChildContent.readingStories
     : Array.isArray(candidate.readingStories) && candidate.readingStories.length === 6
     ? candidate.readingStories.map((item, index) => {
