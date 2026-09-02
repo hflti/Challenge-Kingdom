@@ -2385,6 +2385,9 @@ function HomeView({
 
 function ChallengeStoryReader({ missionId, text, active }: { missionId: string; text: string; active: boolean }) {
   const [spokenWords, setSpokenWords] = useState(0);
+  const [storyPaused, setStoryPaused] = useState(false);
+  const [pauseEndsAt, setPauseEndsAt] = useState<number | null>(null);
+  const [pauseCooldownEndsAt, setPauseCooldownEndsAt] = useState<number | null>(null);
   const readerRef = useRef<HTMLDivElement>(null);
   const positionRef = useRef(0);
 
@@ -2392,6 +2395,9 @@ function ChallengeStoryReader({ missionId, text, active }: { missionId: string; 
     const element = readerRef.current;
     positionRef.current = 0;
     setSpokenWords(0);
+    setStoryPaused(false);
+    setPauseEndsAt(null);
+    setPauseCooldownEndsAt(null);
     if (element) element.scrollTop = 0;
     return () => {
       if ("speechSynthesis" in window) speechSynthesis.cancel();
@@ -2399,7 +2405,7 @@ function ChallengeStoryReader({ missionId, text, active }: { missionId: string; 
   }, [missionId]);
 
   useEffect(() => {
-    if (!active) {
+    if (!active || storyPaused) {
       if ("speechSynthesis" in window) speechSynthesis.cancel();
       return;
     }
@@ -2416,7 +2422,31 @@ function ChallengeStoryReader({ missionId, text, active }: { missionId: string; 
     };
     frame = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frame);
-  }, [active]);
+  }, [active, storyPaused]);
+
+  useEffect(() => {
+    if (!pauseEndsAt && !pauseCooldownEndsAt) return;
+    const tick = () => {
+      const now = Date.now();
+      if (pauseEndsAt && now >= pauseEndsAt) {
+        setStoryPaused(false);
+        setPauseEndsAt(null);
+      }
+      if (pauseCooldownEndsAt && now >= pauseCooldownEndsAt) setPauseCooldownEndsAt(null);
+    };
+    tick();
+    const interval = window.setInterval(tick, 250);
+    return () => window.clearInterval(interval);
+  }, [pauseCooldownEndsAt, pauseEndsAt]);
+
+  const pauseStoryScroll = () => {
+    if (!active || storyPaused || pauseCooldownEndsAt) return;
+    const now = Date.now();
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    setStoryPaused(true);
+    setPauseEndsAt(now + 15_000);
+    setPauseCooldownEndsAt(now + 30_000);
+  };
 
   const speakWord = (word: string) => {
     if (spokenWords >= 20 || !("speechSynthesis" in window)) return;
@@ -2442,6 +2472,15 @@ function ChallengeStoryReader({ missionId, text, active }: { missionId: string; 
           ))}
         </div>
       </div>
+      <button
+        className="outline-button story-scroll-pause-button"
+        type="button"
+        data-testid="button-pause-story-scroll"
+        onClick={pauseStoryScroll}
+        disabled={!active || storyPaused || Boolean(pauseCooldownEndsAt)}
+      >
+        <Pause size={16} /> إيقاف صعود القصة لمدة 15 ثانية
+      </button>
       <p>{active ? "القصة تتحرك أثناء عمل المؤقت. اضغط أي كلمة لسماعها." : "ابدأ العدّاد لتبدأ القصة بالحركة."}</p>
     </div>
   );
@@ -2515,7 +2554,7 @@ function QuestView({
         <section className="quest-card" data-testid="panel-active-quest">
           <div className="eyebrow"><Icon size={14} /> {isStory ? "تحدّي القراءة النشط" : "المهمة النشطة"} <span className="card-avatar quest-avatar" aria-label="رمز البطل"><AvatarVisual value={avatar} alt="البطل" /></span></div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
            {isStory && <ChallengeStoryReader missionId={mission.id} text={mission.storyText!} active={running && !pauseActive && !timeUp} />}
-           <div className={`timer-shell ${running ? "running" : ""} ${pauseActive ? "paused" : ""} ${alertSeconds > 0 ? "alerting" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{timeUp && alertSeconds === 0 && graceSeconds > 0 ? formatTime(graceSeconds) : formatTime(seconds)}</span><span className="timer-label">{pauseActive ? `استراحة ${formatTime(pauseSeconds)}` : alertSeconds > 0 ? `تنبيه النهاية ${formatTime(alertSeconds)}` : timeUp && graceSeconds > 0 ? "مهلة القرار" : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
+           <div className={`timer-shell ${isStory ? "story-timer-shell" : ""} ${running ? "running" : ""} ${pauseActive ? "paused" : ""} ${alertSeconds > 0 ? "alerting" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{timeUp && alertSeconds === 0 && graceSeconds > 0 ? formatTime(graceSeconds) : formatTime(seconds)}</span><span className="timer-label">{pauseActive ? `استراحة ${formatTime(pauseSeconds)}` : alertSeconds > 0 ? `تنبيه النهاية ${formatTime(alertSeconds)}` : timeUp && graceSeconds > 0 ? "مهلة القرار" : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
            <div className="quest-actions">
                {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume} disabled={resumeWaitSeconds > 0}><Play size={16} /> {resumeWaitSeconds > 0 ? `انتظر ${resumeWaitSeconds} ثوانٍ` : "استئناف التحدي"}</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <><button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>{!timeUp && <button className="outline-button cancel-before-start" type="button" data-testid="button-cancel-before-start" onClick={onCancelBeforeStart}><CircleX size={16} /> إلغاء قبل البدء</button>}</>}
                {!timeUp && canFinishEarly && !finishCodeOpen && <button className="outline-button early-finish-button" data-testid="button-finish-early" onClick={onOpenEarlyFinish}><KeyRound size={16} /> {isStory ? "إنهاء القصة الآن" : "إنهاء المهمة الآن"}</button>}

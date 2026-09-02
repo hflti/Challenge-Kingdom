@@ -1016,6 +1016,7 @@
 .quest-card h1 { font-family: var(--app-font-serif); font-size: clamp(31px, 4vw, 49px); margin: 12px 0 5px; }
 .quest-card .quest-description { color: rgba(249,240,214,.7); margin: 0 auto; max-width: 390px; font-size: 13px; line-height: 1.8; }
 .timer-shell { width: min(280px, 80vw); aspect-ratio: 1; border-radius: 50%; margin: 27px auto 24px; padding: 14px; background: conic-gradient(hsl(var(--accent)) 0 23%, rgba(249,240,214,.11) 23% 100%); }
+.timer-shell.story-timer-shell { width: min(205px, 58vw); margin-top: 18px; margin-bottom: 19px; }
 .timer-core { height: 100%; border-radius: 50%; display: grid; place-items: center; align-content: center; gap: 4px; background: hsl(var(--secondary)); border: 1px solid rgba(249,240,214,.14); }
 .timer-number { font-size: clamp(53px, 9vw, 79px); line-height: .9; font-weight: 900; letter-spacing: -.05em; color: hsl(var(--primary-foreground)); font-variant-numeric: tabular-nums; }
 .timer-label { color: hsl(var(--accent)); font-size: 11px; }
@@ -1228,7 +1229,7 @@
 .reader-base-letter { color: #000; }.reader-diacritic { color: #d62828; }
 .reader-text button:hover .reader-base-letter { color: #000; }.reader-text button:hover .reader-diacritic { color: #d62828; }
 .reader-note { display: flex; justify-content: center; align-items: center; gap: 6px; margin: 13px 0 0; color: hsl(var(--muted-foreground)); font-size: 10px; }
-.challenge-story { max-width: 650px; margin: 20px auto 4px; padding: 13px; border: 1px solid rgba(244,190,57,.3); border-radius: 18px; background: rgba(249,240,214,.08); }.challenge-story-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 9px; margin-bottom: 9px; color: hsl(var(--accent)); font-size: 10px; }.challenge-story-toolbar span { display: inline-flex; align-items: center; gap: 5px; }.challenge-story-text { height: 245px; background: rgba(249,240,214,.93); }.challenge-story > p { margin: 8px 0 0; color: rgba(249,240,214,.6); font-size: 10px; }
+.challenge-story { max-width: 760px; margin: 20px auto 4px; padding: 13px; border: 1px solid rgba(244,190,57,.3); border-radius: 18px; background: rgba(249,240,214,.08); }.challenge-story-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 9px; margin-bottom: 9px; color: hsl(var(--accent)); font-size: 10px; }.challenge-story-toolbar span { display: inline-flex; align-items: center; gap: 5px; }.challenge-story-text { height: 360px; background: rgba(249,240,214,.93); }.story-scroll-pause-button { display: inline-flex; margin: 12px auto 0; color: hsl(var(--primary-foreground)); border-color: rgba(249,240,214,.38); background: rgba(249,240,214,.08); }.story-scroll-pause-button:hover:not(:disabled) { color: hsl(var(--secondary)); background: hsl(var(--accent)); }.story-scroll-pause-button:disabled { opacity: .48; cursor: not-allowed; }.challenge-story > p { margin: 8px 0 0; color: rgba(249,240,214,.6); font-size: 10px; }
 .avatar-photo { width: 100%; height: 100%; display: block; object-fit: cover; border-radius: inherit; }
 .profile-photo-preview { width: 72px; height: 72px; display: grid; place-items: center; overflow: hidden; margin: 8px auto; border: 3px solid hsl(var(--accent)); border-radius: 50%; background: hsl(var(--muted)); font-size: 30px; }
 .avatar-upload-button { position: relative; display: inline-flex; margin: 0 auto 7px; cursor: pointer; }
