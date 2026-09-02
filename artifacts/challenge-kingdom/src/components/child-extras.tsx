@@ -64,11 +64,13 @@ export function ChildExtras({ content, points, rewards, childName, childAvatar, 
     element.scrollTop = 0;
     let frame = 0;
     let last = performance.now();
+    let position = 0;
     const animate = (now: number) => {
       const max = element.scrollHeight - element.clientHeight;
-      if (element.scrollTop < max) element.scrollTop = Math.min(max, element.scrollTop + (now - last) * 0.018);
+      position = Math.min(max, position + (now - last) * 0.018);
+      element.scrollTop = position;
       last = now;
-      frame = requestAnimationFrame(animate);
+      if (position < max) frame = requestAnimationFrame(animate);
     };
     frame = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frame);

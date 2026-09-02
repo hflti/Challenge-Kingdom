@@ -1335,9 +1335,11 @@ function App() {
     if (!member) { setProfileAccessError(action === "enter" || action === "protected-feature" ? "هذا الملف غير متاح." : "أضف ولي أمر من لوحة الإدارة أولاً."); return; }
     try {
       const session = await accountsApi.verifyMember(familyUsername, familyCode, member.id, profileAccessCode, action === "enter" || action === "protected-feature" ? "child" : "owner");
-      memberTokenRef.current = session.token;
-      memberRoleRef.current = session.role;
-      setMemberToken(session.token);
+      if (action !== "protected-feature") {
+        memberTokenRef.current = session.token;
+        memberRoleRef.current = session.role;
+        setMemberToken(session.token);
+      }
       const onUnlocked = action === "protected-feature" ? pendingChildUnlockRef.current : null;
       pendingChildUnlockRef.current = null;
       cancelProfileAccess();

@@ -4,3 +4,4 @@
 - [مسارات API في إنتاج Replit](replit-production-api-routing.md) — لا تحوّل بناء production إلى api.php؛ استخدم خدمات Node المسجلة تحت /api.
 - [فحوصات جاهزية خدمة API](api-readiness-probes.md) — اجعل جذر الخدمة و/api و/api/healthz تعيد 200؛ النشر قد يفحص /api إضافةً إلى المسار المخصص.
 - [مهلة ما بعد الدمج](post-merge-timeout.md) — تثبيت pnpm مع مزامنة Drizzle يحتاج مهلة تتجاوز 20 ثانية في هذا المشروع.
+- [ثبات جلسة الوصول المحمي](protected-access-session-stability.md) — فتح ميزة بالرمز يتحقق من الصلاحية فقط؛ لا يبدّل جلسة الطفل أو يسحب حالة قديمة.
