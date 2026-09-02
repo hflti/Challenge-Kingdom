@@ -34,6 +34,13 @@ export type MemberSession = {
 
 type ApiErrorBody = { error?: string; message?: string };
 
+export class AccountApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "AccountApiError";
+  }
+}
+
 const accountApiUrl = import.meta.env.VITE_ACCOUNTS_API_URL?.trim()
   || "/api/accounts";
 
@@ -69,7 +76,7 @@ async function request<T>(
     } catch {
       // A status-specific message below is useful even when a proxy returns HTML.
     }
-    throw new Error(detail || `تعذر إتمام الطلب (${response.status}).`);
+    throw new AccountApiError(detail || `تعذر إتمام الطلب (${response.status}).`, response.status);
   }
   return response.json() as Promise<T>;
 }

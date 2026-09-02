@@ -42,7 +42,7 @@ import kinanPhoto from "@assets/كنان_1787868667282.jpeg";
 import { AdminConsole } from "./components/admin-console";
 import { ChildExtras, defaultChildRewards, normalizeChildRewards, type BoxOpening, type ChildRewardsState } from "./components/child-extras";
 import { defaultChildContent, normalizeChildContent, type ChildContentConfig } from "./lib/child-content";
-import { accountsApi, type FamilyMember } from "./lib/account-api";
+import { AccountApiError, accountsApi, type FamilyMember } from "./lib/account-api";
 
 type ProfileId = string;
 type BeforeInstallPromptEvent = Event & {
@@ -629,6 +629,7 @@ function App() {
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
+  const [sessionNotice, setSessionNotice] = useState("");
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminToken, setAdminToken] = useState<string | null>(null);
   const memberTokenRef = useRef<string | null>(null);
@@ -780,6 +781,34 @@ function App() {
     });
   }, [applyActiveChallenge, selectedId]);
 
+  const invalidateFamilySession = useCallback(() => {
+    memberTokenRef.current = null;
+    memberRoleRef.current = null;
+    cloudVersionRef.current = null;
+    cloudReadyRef.current = false;
+    lastCloudSignatureRef.current = null;
+    pendingCloudSaveRef.current = false;
+    setMemberToken(null);
+    setFamilyCode("");
+    setFamilyUsername("");
+    setFamilyMembers([]);
+    setMembersError("");
+    setMembersLoading(false);
+    setSelectedId(null);
+    setSaved((current) => ({ ...current, selectedId: null }));
+    setScreen("choose");
+    setTab("quest");
+    setProfileAccessAction(null);
+    setProfileAccessTarget(null);
+    setProfileAccessCode("");
+    setProfileAccessError("");
+    pendingChildUnlockRef.current = null;
+    setFinishCode("");
+    setFinishCodeOpen(false);
+    setSessionNotice("انتهت الجلسة لأن رمز المملكة تغيّر. أدخل الرمز الجديد لإعادة الربط.");
+    setSyncStatus("needs-code");
+  }, []);
+
   const pullCloudState = useCallback(async (force = false, apply = true) => {
     if (!familyCode || !memberTokenRef.current) return "missing" as const;
     try {
@@ -787,6 +816,10 @@ function App() {
         headers: { "x-family-code": familyCode, Authorization: `Bearer ${memberTokenRef.current}` },
         cache: "no-store",
       });
+      if (response.status === 401) {
+        invalidateFamilySession();
+        return "unauthorized" as const;
+      }
       if (response.status === 404) return "missing" as const;
       if (!response.ok) throw new Error(`Cloud request failed with ${response.status}.`);
 
@@ -802,7 +835,7 @@ function App() {
       setSyncStatus("offline");
       return "offline" as const;
     }
-  }, [applyCloudState, familyCode]);
+  }, [applyCloudState, familyCode, invalidateFamilySession]);
 
   const saveCloudState = useCallback(async (keepalive = false) => {
     if (!familyCode || !memberTokenRef.current || !cloudReadyRef.current) return;
@@ -850,6 +883,10 @@ function App() {
           keepalive,
         });
 
+        if (response.status === 401) {
+          invalidateFamilySession();
+          return;
+        }
         if (response.status === 409) {
           if (completedProfileIdRef.current) {
             if (!completionConflictRetried) {
@@ -889,7 +926,7 @@ function App() {
     } finally {
       cloudSaveInFlightRef.current = false;
     }
-  }, [familyCode, pullCloudState]);
+  }, [familyCode, invalidateFamilySession, pullCloudState]);
 
   useEffect(() => {
     if (!familyCode || !memberToken) {
@@ -904,6 +941,7 @@ function App() {
     void (async () => {
       const result = await pullCloudState(true);
       if (cancelled) return;
+      if (result === "unauthorized") return;
       cloudReadyRef.current = true;
       if (result === "missing") {
         await saveCloudState();
@@ -935,10 +973,15 @@ function App() {
         setSelectedId((current) => result.members.some((member) => member.id === current && member.role === "child") ? current : null);
       }
     }).catch((cause) => {
-      if (!cancelled) setMembersError(cause instanceof Error ? cause.message : "تعذر تحميل ملفات العائلة.");
+      if (cancelled) return;
+      if (cause instanceof AccountApiError && (cause.status === 401 || cause.status === 404)) {
+        invalidateFamilySession();
+        return;
+      }
+      setMembersError(cause instanceof Error ? cause.message : "تعذر تحميل ملفات العائلة.");
     }).finally(() => { if (!cancelled) setMembersLoading(false); });
     return () => { cancelled = true; };
-  }, [familyCode, familyUsername]);
+  }, [familyCode, familyUsername, invalidateFamilySession]);
 
   useEffect(() => {
     if (!familyCode || !memberToken || !cloudReadyRef.current) return;
@@ -1008,6 +1051,7 @@ function App() {
     lastCloudSignatureRef.current = null;
     setFamilyUsername(normalizedUsername);
     setFamilyCode(normalizedCode);
+    setSessionNotice("");
     setSyncStatus("connecting");
   };
 
@@ -1650,6 +1694,7 @@ function App() {
     cloudVersionRef.current = null;
     cloudReadyRef.current = false;
     lastCloudSignatureRef.current = null;
+    setSessionNotice("");
   };
 
   const goBack = () => {
@@ -1684,7 +1729,7 @@ function App() {
   };
 
   if (!familyCode) {
-    return <FamilySyncSetup onConnect={connectFamily} onAdminReveal={revealAdmin} adminToken={adminToken} adminOpen={adminOpen} onCloseAdmin={() => { setAdminOpen(false); setAdminToken(null); }} />;
+    return <FamilySyncSetup notice={sessionNotice} onConnect={connectFamily} onAdminReveal={revealAdmin} adminToken={adminToken} adminOpen={adminOpen} onCloseAdmin={() => { setAdminOpen(false); setAdminToken(null); }} />;
   }
 
   if (screen === "choose" || !selectedId || !profile) {
@@ -1792,7 +1837,7 @@ function App() {
   );
 }
 
-function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCloseAdmin }: { onConnect: (username: string, code: string) => Promise<void>; onAdminReveal: (code: string) => Promise<boolean>; adminToken: string | null; adminOpen: boolean; onCloseAdmin: () => void }) {
+function FamilySyncSetup({ notice, onConnect, onAdminReveal, adminToken, adminOpen, onCloseAdmin }: { notice?: string; onConnect: (username: string, code: string) => Promise<void>; onAdminReveal: (code: string) => Promise<boolean>; adminToken: string | null; adminOpen: boolean; onCloseAdmin: () => void }) {
   const [username, setUsername] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -1847,7 +1892,7 @@ function FamilySyncSetup({ onConnect, onAdminReveal, adminToken, adminOpen, onCl
           <input id="family-username" className="code-input" data-testid="input-family-username" type="text" name="family_username" autoComplete="off" inputMode="text" pattern="[A-Za-z0-9]{3,32}" minLength={3} maxLength={32} value={username} onChange={(event) => { setUsername(event.target.value.replace(/[^A-Za-z0-9]/g, "")); setError(""); }} autoFocus />
           <label htmlFor="family-code">الرمز</label>
           <input id="family-code" className="code-input" data-testid="input-family-code" type="password" name="family_access_code" autoComplete="new-password" minLength={4} maxLength={64} value={code} onChange={(event) => { setCode(event.target.value); setError(""); }} />
-          {error && <p className="form-error" data-testid="status-family-code-error">{error}</p>}
+          {(error || notice) && <p className="form-error" data-testid="status-family-code-error">{error || notice}</p>}
           <button className="primary-button gold" type="submit" data-testid="button-connect-family"><KeyRound size={16} /> ربط المملكة</button>
         </form>
          <div className="admin-entry-tools">
