@@ -1738,6 +1738,23 @@ function App() {
     playSound("success");
   };
 
+  const finishReadingStory = async (code: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!profile || !owner) return { ok: false, error: "أضف ولي أمر من لوحة الإدارة أولاً." };
+    try {
+      const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, code.trim(), "owner");
+      memberTokenRef.current = session.token;
+      memberRoleRef.current = session.role;
+      awardExtraPoints(saved.childContent.pointRewards.readingStory);
+      return { ok: true };
+    } catch (cause) {
+      if (isFamilySessionFailure(cause)) {
+        clearMemberSession(expiredFamilySessionNotice);
+        return { ok: false, error: expiredFamilySessionNotice };
+      }
+      return { ok: false, error: "الرمز غير صحيح. حاول مرة أخرى." };
+    }
+  };
+
   const spendRewardPoints = (cost: number, itemId: string) => {
     if (!profile || !Number.isFinite(cost) || cost < 1) return false;
     const currentRewards = savedRef.current.childRewards[profile.id] ?? defaultChildRewards;
@@ -1907,7 +1924,7 @@ function App() {
             {tab === "parent" && screen === "home" ? (
               <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset }, profilePhotos: { ...current.profilePhotos, [profileId]: "" } }))} onUploadPhoto={uploadProfilePhoto} />
             ) : screen === "home" ? (
-               <HomeView profile={activeProfile} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onCreateMission={(...args) => requestChildUnlock(() => createMission(...args))} onDeleteMission={(missionId) => requestChildUnlock(() => deleteMission(missionId))} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onRequestUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
+              <HomeView profile={activeProfile} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onCreateMission={(...args) => requestChildUnlock(() => createMission(...args))} onDeleteMission={(missionId) => requestChildUnlock(() => deleteMission(missionId))} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onFinishStory={finishReadingStory} onRequestUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onCancelBeforeStart={newChallenge} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
@@ -2148,6 +2165,7 @@ function HomeView({
   onSpendReward,
   onOpenRewardBox,
   onAwardExtraPoints,
+  onFinishStory,
   onRequestUnlock,
   onParent,
 }: {
@@ -2166,6 +2184,7 @@ function HomeView({
   onSpendReward: (cost: number, itemId: string) => boolean;
   onOpenRewardBox: (opening: BoxOpening) => void;
   onAwardExtraPoints: (amount: number) => void;
+  onFinishStory: (code: string) => Promise<{ ok: boolean; error?: string }>;
   onRequestUnlock: (onUnlocked: () => void) => void;
   onParent: () => void;
 }) {
@@ -2283,7 +2302,7 @@ function HomeView({
             </div>}
         </div>
       </section>
-      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onRequestUnlock={onRequestUnlock} />
+      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onFinishStory={onFinishStory} onRequestUnlock={onRequestUnlock} />
     </>
   );
 }
