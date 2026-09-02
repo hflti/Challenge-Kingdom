@@ -2353,7 +2353,7 @@ function QuestView({
               <form className="finish-code-box early-finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
                 <strong>إنهاء المهمة قبل انتهاء الوقت</strong>
                 <label htmlFor="finish-code">الرمز الموحد للمملكة</label>
-                <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="الرمز الموحد للمملكة" autoFocus />
+                 <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" maxLength={64} value={finishCode} onChange={(event) => onCode(event.target.value)} aria-label="الرمز الموحد للمملكة" autoFocus />
                 {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
                 <div className="finish-code-actions">
                   <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
@@ -2371,7 +2371,7 @@ function QuestView({
                ) : (
                   <form className="finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
                    <label htmlFor="finish-code">الرمز الموحد للمملكة</label>
-                     <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="الرمز الموحد للمملكة" autoFocus />
+                      <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" maxLength={64} value={finishCode} onChange={(event) => onCode(event.target.value)} aria-label="الرمز الموحد للمملكة" autoFocus />
                    {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
                     <div className="finish-code-actions">
                       <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
