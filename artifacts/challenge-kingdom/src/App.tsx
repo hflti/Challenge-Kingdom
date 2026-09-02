@@ -43,7 +43,7 @@ import ayhamPhoto from "@assets/أيهم_1787868667283.jpeg";
 import kinanPhoto from "@assets/كنان_1787868667282.jpeg";
 import { AdminConsole } from "./components/admin-console";
 import { ChildExtras, defaultChildRewards, normalizeChildRewards, type BoxOpening, type ChildRewardsState } from "./components/child-extras";
-import { defaultChildContent, normalizeChildContent, type ChildContentConfig } from "./lib/child-content";
+import { defaultChildContent, normalizeChildContent, type ChildContentConfig, type ReadingStoryContent } from "./lib/child-content";
 import { accountsApi, isFamilySessionFailure, type FamilyMember } from "./lib/account-api";
 
 type ProfileId = string;
@@ -78,6 +78,8 @@ type Mission = {
   featured?: boolean;
   rewardPoints?: number;
   requiresCode?: boolean;
+  kind?: "mission" | "story";
+  storyText?: string;
 };
 
 const profiles: Profile[] = [
@@ -131,6 +133,8 @@ type SavedMission = {
   duration: number;
   rewardPoints?: number;
   requiresCode?: boolean;
+  kind?: "mission" | "story";
+  storyText?: string;
 };
 
 type SoundPreferences = {
@@ -357,7 +361,7 @@ function cloudSyncSignature(state: SavedState, challenges: ActiveChallenges) {
 
 function missionFromSaved(savedMission: SavedMission): Mission {
   const existing = missions.find((item) => item.id === savedMission.id);
-  return { ...savedMission, icon: existing?.icon ?? (savedMission.requiresCode ? KeyRound : PenLine), featured: existing?.featured };
+  return { ...savedMission, icon: existing?.icon ?? (savedMission.kind === "story" ? BookOpen : savedMission.requiresCode ? KeyRound : PenLine), featured: existing?.featured };
 }
 
 function restoreActiveChallenge(challenge: ActiveChallenge | undefined) {
@@ -1273,7 +1277,7 @@ function App() {
     if (!selectedId || !mission) return;
     const persisted: ActiveChallenge = {
       challengeId: activeChallengeId ?? `legacy-${mission.id}-${Date.now()}`,
-      mission: { id: mission.id, title: mission.title, description: mission.description, duration: mission.duration, rewardPoints: mission.rewardPoints, requiresCode: mission.requiresCode },
+      mission: { id: mission.id, title: mission.title, description: mission.description, duration: mission.duration, rewardPoints: mission.rewardPoints, requiresCode: mission.requiresCode, kind: mission.kind, storyText: mission.storyText },
       seconds,
       extensionCount,
       timerEndsAt,
@@ -1452,6 +1456,21 @@ function App() {
   const requestMissionStart = (nextMission: Mission) => {
     requestChildUnlock(() => {
       startMission(nextMission);
+    });
+  };
+
+  const startReadingChallenge = (story: ReadingStoryContent, durationMinutes: number, rewardPoints: number) => {
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 120) return;
+    if (!Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 50) return;
+    startMission({
+      id: `story-${story.id}`,
+      title: story.title,
+      description: "تحدّي قراءة كامل: اقرأ القصة قبل انتهاء الوقت، ويمكنك استخدام جميع أدوات التحدي.",
+      duration: durationMinutes * 60,
+      rewardPoints,
+      kind: "story",
+      storyText: story.text,
+      icon: BookOpen,
     });
   };
 
@@ -1979,7 +1998,7 @@ function App() {
             {tab === "parent" && screen === "home" ? (
               <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset }, profilePhotos: { ...current.profilePhotos, [profileId]: "" } }))} onUploadPhoto={uploadProfilePhoto} onUpdateReward={updateReward} onUploadRewardImage={uploadRewardImage} />
             ) : screen === "home" ? (
-              <HomeView profile={activeProfile} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onCreateMission={(...args) => requestChildUnlock(() => createMission(...args))} onDeleteMission={(missionId) => requestChildUnlock(() => deleteMission(missionId))} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onFinishStory={finishReadingStory} onRequestUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
+              <HomeView profile={activeProfile} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onStartStory={startReadingChallenge} onCreateMission={(...args) => requestChildUnlock(() => createMission(...args))} onDeleteMission={(missionId) => requestChildUnlock(() => deleteMission(missionId))} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onFinishStory={finishReadingStory} onRequestUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onCancelBeforeStart={newChallenge} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
@@ -2214,6 +2233,7 @@ function HomeView({
   activeMission,
   missions: availableMissions,
   onStart,
+  onStartStory,
   onCreateMission,
   onDeleteMission,
   onResetMap,
@@ -2233,6 +2253,7 @@ function HomeView({
   activeMission: Mission | null;
   missions: Mission[];
   onStart: (mission: Mission) => void;
+  onStartStory: (story: ReadingStoryContent, durationMinutes: number, rewardPoints: number) => void;
   onCreateMission: (title: string, durationMinutes: number, rewardPoints: number) => void;
   onDeleteMission: (missionId: string) => void;
   onResetMap: (code: string) => Promise<boolean>;
@@ -2357,8 +2378,72 @@ function HomeView({
             </div>}
         </div>
       </section>
-      <ChildExtras content={childContent} points={points} completed={completed} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onFinishStory={onFinishStory} onRequestUnlock={onRequestUnlock} />
+      <ChildExtras content={childContent} points={points} completed={completed} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onFinishStory={onFinishStory} onStartStory={onStartStory} onRequestUnlock={onRequestUnlock} />
     </>
+  );
+}
+
+function ChallengeStoryReader({ missionId, text, active }: { missionId: string; text: string; active: boolean }) {
+  const [spokenWords, setSpokenWords] = useState(0);
+  const readerRef = useRef<HTMLDivElement>(null);
+  const positionRef = useRef(0);
+
+  useEffect(() => {
+    const element = readerRef.current;
+    positionRef.current = 0;
+    setSpokenWords(0);
+    if (element) element.scrollTop = 0;
+    return () => {
+      if ("speechSynthesis" in window) speechSynthesis.cancel();
+    };
+  }, [missionId]);
+
+  useEffect(() => {
+    if (!active) {
+      if ("speechSynthesis" in window) speechSynthesis.cancel();
+      return;
+    }
+    const element = readerRef.current;
+    if (!element) return;
+    let frame = 0;
+    let last = performance.now();
+    const animate = (now: number) => {
+      const max = Math.max(0, element.scrollHeight - element.clientHeight);
+      positionRef.current = Math.min(max, positionRef.current + (now - last) * 0.018);
+      element.scrollTop = positionRef.current;
+      last = now;
+      if (positionRef.current < max) frame = requestAnimationFrame(animate);
+    };
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [active]);
+
+  const speakWord = (word: string) => {
+    if (spokenWords >= 20 || !("speechSynthesis" in window)) return;
+    speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(word.replace(/[\u064B-\u065F\u0670]/g, ""));
+    utterance.lang = "ar-SA";
+    utterance.rate = 0.75;
+    speechSynthesis.speak(utterance);
+    setSpokenWords((count) => count + 1);
+  };
+
+  return (
+    <div className="challenge-story">
+      <div className="challenge-story-toolbar"><span><BookOpen size={15} /> نص القصة</span><span><Volume2 size={14} /> {spokenWords}/20 كلمة منطوقة</span></div>
+      <div className="reader-text challenge-story-text" ref={readerRef}>
+        <div className="reader-flow">
+          {text.split(/\s+/).map((word, index) => (
+            <button key={`${word}-${index}`} className="reader-word" onClick={() => speakWord(word)}>
+              {Array.from(word).map((character, characterIndex) => /[\u064B-\u065F\u0670]/.test(character)
+                ? <span className="reader-diacritic" key={characterIndex}>{character}</span>
+                : <span className="reader-base-letter" key={characterIndex}>{character}</span>)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p>{active ? "القصة تتحرك أثناء عمل المؤقت. اضغط أي كلمة لسماعها." : "ابدأ العدّاد لتبدأ القصة بالحركة."}</p>
+    </div>
   );
 }
 
@@ -2416,6 +2501,7 @@ function QuestView({
   onVerifyCode: () => void;
 }) {
   const Icon = mission.icon;
+  const isStory = mission.kind === "story" && Boolean(mission.storyText);
   const progress = mission.duration ? ((mission.duration - seconds) / mission.duration) * 100 : 0;
   const nextExtensionSeconds = extensionDuration(mission.duration, extensionCount + 1);
   const canFinishEarly = running;
@@ -2427,15 +2513,16 @@ function QuestView({
       <div className="quest-header"><button className="back-button" data-testid="button-back-to-missions" aria-label="العودة للمهام" onClick={onBack}><ArrowLeft size={18} /></button><div><div className="eyebrow">ميدان التحدي</div><p className="subtle">أثبت أن تركيزك أقوى من الملل.</p></div></div>
       <div className="quest-layout">
         <section className="quest-card" data-testid="panel-active-quest">
-          <div className="eyebrow"><Icon size={14} /> المهمة النشطة <span className="card-avatar quest-avatar" aria-label="رمز البطل"><AvatarVisual value={avatar} alt="البطل" /></span></div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
+          <div className="eyebrow"><Icon size={14} /> {isStory ? "تحدّي القراءة النشط" : "المهمة النشطة"} <span className="card-avatar quest-avatar" aria-label="رمز البطل"><AvatarVisual value={avatar} alt="البطل" /></span></div><h1 data-testid="text-active-mission">{mission.title}</h1><p className="quest-description">{mission.description}</p>
+           {isStory && <ChallengeStoryReader missionId={mission.id} text={mission.storyText!} active={running && !pauseActive && !timeUp} />}
            <div className={`timer-shell ${running ? "running" : ""} ${pauseActive ? "paused" : ""} ${alertSeconds > 0 ? "alerting" : ""}`} style={{ background: `conic-gradient(hsl(var(--accent)) 0 ${progress}%, rgba(249,240,214,.11) ${progress}% 100%)` }}><div className="timer-core"><span className="timer-number" data-testid="display-countdown">{timeUp && alertSeconds === 0 && graceSeconds > 0 ? formatTime(graceSeconds) : formatTime(seconds)}</span><span className="timer-label">{pauseActive ? `استراحة ${formatTime(pauseSeconds)}` : alertSeconds > 0 ? `تنبيه النهاية ${formatTime(alertSeconds)}` : timeUp && graceSeconds > 0 ? "مهلة القرار" : seconds === 0 ? "اكتمل الوقت" : running ? "المعركة جارية" : "جاهز للانطلاق"}</span></div></div>
            <div className="quest-actions">
                {pauseActive ? <button className="primary-button gold" data-testid="button-resume-timer" onClick={onResume} disabled={resumeWaitSeconds > 0}><Play size={16} /> {resumeWaitSeconds > 0 ? `انتظر ${resumeWaitSeconds} ثوانٍ` : "استئناف التحدي"}</button> : running ? <button className="primary-button gold" data-testid="button-pause-timer" onClick={onPause} disabled={pauseSeconds <= 0}><Pause size={16} /> {pauseSeconds > 0 ? `إيقاف مؤقت (${formatTime(pauseSeconds)})` : "نفد رصيد الاستراحة"}</button> : <><button className="primary-button gold" data-testid="button-start-timer" onClick={onStartTimer} disabled={seconds === 0 || alertSeconds > 0}><Play size={16} /> ابدأ العدّاد</button>{!timeUp && <button className="outline-button cancel-before-start" type="button" data-testid="button-cancel-before-start" onClick={onCancelBeforeStart}><CircleX size={16} /> إلغاء قبل البدء</button>}</>}
-              {!timeUp && canFinishEarly && !finishCodeOpen && <button className="outline-button early-finish-button" data-testid="button-finish-early" onClick={onOpenEarlyFinish}><KeyRound size={16} /> إنهاء المهمة الآن</button>}
+               {!timeUp && canFinishEarly && !finishCodeOpen && <button className="outline-button early-finish-button" data-testid="button-finish-early" onClick={onOpenEarlyFinish}><KeyRound size={16} /> {isStory ? "إنهاء القصة الآن" : "إنهاء المهمة الآن"}</button>}
             </div>
             {!timeUp ? finishCodeOpen ? (
               <form className="finish-code-box early-finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
-                <strong>إنهاء المهمة قبل انتهاء الوقت</strong>
+                 <strong>{isStory ? "إنهاء القصة قبل انتهاء الوقت" : "إنهاء المهمة قبل انتهاء الوقت"}</strong>
                 <label htmlFor="finish-code">الرمز الموحد للمملكة</label>
                  <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" maxLength={64} value={finishCode} onChange={(event) => onCode(event.target.value)} aria-label="الرمز الموحد للمملكة" autoFocus />
                 {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
@@ -2450,7 +2537,7 @@ function QuestView({
                {!finishCodeOpen ? (
                  <div className="time-up-actions">
                     <button className="primary-button gold" data-testid="button-extend-time" onClick={onExtend} disabled={alertSeconds > 0 || graceSeconds <= 0}><TimerReset size={16} /> تمديد لمدة {formatDuration(nextExtensionSeconds)}</button>
-                   <button className="outline-button" data-testid="button-open-finish-code" onClick={onOpenFinishCode} disabled={alertSeconds > 0 || graceSeconds <= 0}><KeyRound size={16} /> إنهاء المهمة</button>
+                    <button className="outline-button" data-testid="button-open-finish-code" onClick={onOpenFinishCode} disabled={alertSeconds > 0 || graceSeconds <= 0}><KeyRound size={16} /> {isStory ? "إنهاء القصة" : "إنهاء المهمة"}</button>
                  </div>
                ) : (
                   <form className="finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>

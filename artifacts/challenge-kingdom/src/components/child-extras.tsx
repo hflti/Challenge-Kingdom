@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Award, BookOpen, Box, Check, CircleCheck, CircleX, Gamepad2, Hash, KeyRound, ShoppingBag, Sparkles, Volume2, X } from "lucide-react";
+import { Award, BookOpen, Box, Check, CircleCheck, CircleX, Gamepad2, Hash, KeyRound, Play, ShoppingBag, Sparkles, Volume2, X } from "lucide-react";
 import type { ChildContentConfig, LetterGameContent, NumberQuestionContent, StoreItemContent } from "../lib/child-content";
 
 export type BoxOpening = { boxIndex: number; reward: number };
@@ -27,7 +27,7 @@ function rewardIcon(item: StoreItemContent) {
   return item.kind === "game" ? Gamepad2 : item.kind === "screen" ? Sparkles : item.kind === "money" ? Award : ShoppingBag;
 }
 
-export function ChildExtras({ content, points, completed, rewards, childName, childAvatar, onSpend, onOpenBox, onAwardPoints, onRequestUnlock, onFinishStory }: {
+export function ChildExtras({ content, points, completed, rewards, childName, childAvatar, onSpend, onOpenBox, onAwardPoints, onRequestUnlock, onFinishStory, onStartStory }: {
   content: ChildContentConfig;
   points: number;
   completed: number;
@@ -39,6 +39,7 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
   onAwardPoints: (amount: number) => void;
   onRequestUnlock: (onUnlocked: () => void) => void;
   onFinishStory: (code: string) => Promise<{ ok: boolean; error?: string }>;
+  onStartStory: (story: ChildContentConfig["readingStories"][number], durationMinutes: number, rewardPoints: number) => void;
 }) {
   const [panel, setPanel] = useState<Panel | null>(null);
   const [gameKind, setGameKind] = useState<"letters" | "numbers">("letters");
@@ -47,6 +48,9 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
   const [numberAnswer, setNumberAnswer] = useState("");
   const [answered, setAnswered] = useState(false);
   const [storyIndex, setStoryIndex] = useState<number | null>(null);
+  const [storyMinutes, setStoryMinutes] = useState("10");
+  const [storyPoints, setStoryPoints] = useState(String(content.pointRewards.readingStory));
+  const [storySetupError, setStorySetupError] = useState("");
   const [spokenWords, setSpokenWords] = useState(0);
   const [storyPaused, setStoryPaused] = useState(false);
   const [storyFinished, setStoryFinished] = useState(false);
@@ -89,6 +93,25 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
   const selectStory = (index: number) => {
     resetStory();
     setStoryIndex(index);
+    setStoryMinutes("10");
+    setStoryPoints(String(content.pointRewards.readingStory));
+    setStorySetupError("");
+  };
+
+  const startStoryChallenge = () => {
+    if (storyIndex === null) return;
+    const minutes = Number(storyMinutes);
+    const rewardPoints = Number(storyPoints);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
+      setStorySetupError("اختر مدة بين دقيقة واحدة وساعتين.");
+      return;
+    }
+    if (!Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 50) {
+      setStorySetupError("اختر مكافأة بين نقطة واحدة و50 نقطة.");
+      return;
+    }
+    onStartStory(content.readingStories[storyIndex], minutes, rewardPoints);
+    setPanel(null);
   };
 
   useEffect(() => {
@@ -246,7 +269,7 @@ export function ChildExtras({ content, points, completed, rewards, childName, ch
         })()}
         {panel === "reading" && <div>
           <div className="extras-modal-heading"><BookOpen size={25} /><div><div className="eyebrow">القراءة السريعة</div><h2>قصص المملكة</h2></div></div>
-            {storyIndex === null ? <div className="story-grid">{content.readingStories.map((story, index) => <button key={story.id} onClick={() => selectStory(index)}><strong>{story.title}</strong><span>قصة عربية مشكولة للقراءة الهادئة.</span></button>)}</div> : <div className="reader-stage"><div className="reader-toolbar"><button className="outline-button" onClick={() => { resetStory(); setStoryIndex(null); }}>القصص</button><span><Volume2 size={14} /> {spokenWords}/20 كلمة منطوقة</span></div><h3>{content.readingStories[storyIndex]?.title}</h3><div className="reader-text" ref={readerRef}><div className="reader-flow">{content.readingStories[storyIndex]?.text.split(/\s+/).map(renderWord)}</div></div><div className="reader-controls"><button className="outline-button" data-testid="button-pause-story" onClick={pauseStory} disabled={storyFinished || storyPaused || storyPauseCooldownRemaining > 0}>{storyPaused ? "القصة متوقفة مؤقتاً" : storyPauseCooldownRemaining > 0 ? "الإيقاف المؤقت غير متاح الآن" : "إيقاف القصة 15 ثانية"}</button><button className="outline-button story-finish-button" data-testid="button-finish-story" onClick={openStoryFinish} disabled={storyFinished || storyApproval === "pending"}><KeyRound size={15} /> إنهاء القصة الآن</button></div>{storyFinishOpen && <form className="finish-code-box early-finish-code-box story-finish-code-box" onSubmit={(event) => { event.preventDefault(); void submitStoryFinish(); }}><strong>إنهاء القصة قبل النهاية</strong><label htmlFor="story-finish-code">أدخل رمز ولي الأمر للمتابعة</label><input id="story-finish-code" className="code-input" data-testid="input-finish-story-code" type="password" name="finish_story_code" autoComplete="new-password" maxLength={64} value={storyFinishCode} onChange={(event) => setStoryFinishCode(event.target.value)} aria-label="رمز ولي الأمر" autoFocus />{storyFinishError && <p className="gate-error" data-testid="status-finish-story-code-error">{storyFinishError}</p>}<div className="finish-code-actions"><button className="primary-button" type="submit" data-testid="button-verify-finish-story" disabled={storyFinishSubmitting}>{storyFinishSubmitting ? "جارٍ التحقق..." : "متابعة"}</button><button className="outline-button" type="button" data-testid="button-cancel-finish-story" onClick={closeStoryFinish}>العودة للقصة</button></div></form>}{storyApproval === "pending" && <div className="story-approval-panel gate-card" data-testid="panel-story-approval"><div className="eyebrow" style={{ justifyContent: "center" }}>محطة العائلة</div><h3 data-testid="heading-story-gate">هل تم الإنجاز؟</h3><p>بعد إدخال الرمز، يتأكد ولي الأمر من أن القصة أُكملت فعلاً.</p><div className="answer-actions"><button className="primary-button gold" data-testid="button-answer-story-yes" onClick={() => answerStoryApproval(true)}><CircleCheck size={19} /> نعم، تم الإنجاز</button><button className="outline-button" data-testid="button-answer-story-no" onClick={() => answerStoryApproval(false)}><CircleX size={19} /> لا، ليس بعد</button></div></div>}{storyApproval === "no" && <div className="story-approval-panel rejected gate-card"><div className="eyebrow" style={{ justifyContent: "center" }}>محطة العائلة</div><h3>تبقى القصة مكانها</h3><p>لم يتم اعتماد الإنجاز هذه المرة. لا توجد نقاط مضافة، ويمكنك العودة وإكمال القصة ثم المحاولة مجدداً.</p><div className="answer-result failure-result"><CircleX size={25} /><strong>لا يوجد تقدم</strong></div><button className="outline-button" onClick={() => setStoryApproval(null)}>العودة للقصة</button></div>}{storyFinished && <p className="story-finished-message">أحسنت! تم اعتماد القصة واحتساب مكافأتها.</p>}<p className="reader-note">تبدأ القصة من الأسفل وتتحرك بهدوء إلى الأعلى. اضغط أي كلمة لسماعها.</p></div>}
+            {storyIndex === null ? <div className="story-grid">{content.readingStories.map((story, index) => <button key={story.id} onClick={() => selectStory(index)}><strong>{story.title}</strong><span>اختر الوقت والنقاط ثم ابدأها كتحدٍ كامل.</span></button>)}</div> : <div className="story-challenge-setup"><BookOpen size={34} /><div className="eyebrow" style={{ justifyContent: "center" }}>تجهيز تحدّي القراءة</div><h3>{content.readingStories[storyIndex]?.title}</h3><p>ستظهر القصة داخل ميدان التحدي مع المؤقت والإيقاف والتمديد والإنهاء والخصومات نفسها.</p><div className="story-setup-fields"><label><span>مدة التحدي بالدقائق</span><input data-testid="input-story-duration" type="number" min="1" max="120" step="1" value={storyMinutes} onChange={(event) => { setStoryMinutes(event.target.value); setStorySetupError(""); }} /></label><label><span>نقاط التحدي</span><input data-testid="input-story-points" type="number" min="1" max="50" step="1" value={storyPoints} onChange={(event) => { setStoryPoints(event.target.value); setStorySetupError(""); }} /></label></div>{storySetupError && <p className="form-error">{storySetupError}</p>}<div className="story-setup-actions"><button className="primary-button gold" data-testid="button-start-story-challenge" onClick={startStoryChallenge}><Play size={16} /> بدء تحدّي القصة</button><button className="outline-button" onClick={() => setStoryIndex(null)}>اختيار قصة أخرى</button></div></div>}
         </div>}
               {panel === "store" && <div><div className="extras-modal-heading"><ShoppingBag size={25} /><div><div className="eyebrow">متجر المكافآت</div><h2>ماذا تشتري بنقاطك؟</h2></div><strong className="store-balance">{points} نقطة</strong></div><div className="store-items-grid">{content.storeItems.map((item) => { const Icon = rewardIcon(item); const purchased = rewards.purchasedIds.includes(item.id); return <div className={`store-item ${purchased ? "purchased" : ""}`} key={item.id}><span className="store-child-avatar"><Avatar value={childAvatar} name={childName} /></span><span className="store-item-icon">{item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Icon size={19} />}</span><strong>{item.title}</strong><span className="store-cost">{item.cost} نقطة</span><button className={purchased ? "outline-button" : "primary-button gold"} disabled={purchased || points < item.cost} onClick={() => { if (onSpend(item.cost, item.id)) setBoxNotice(`تم طلب ${item.title}.`); }}>{purchased ? <><Check size={14} /> تم الطلب</> : "استبدال"}</button></div>; })}</div>{boxNotice && <p className="game-message">{boxNotice}</p>}</div>}
         {panel === "badges" && <div><div className="extras-modal-heading"><Award size={25} /><div><div className="eyebrow">مراحل الأوسمة الثلاث</div><h2>تقدم {childName}</h2></div></div><div className="badge-stages">{[{ title: "وسام البداية", target: 1, note: "إكمال المرحلة الأولى" }, { title: "وسام التقدم", target: 2, note: "إكمال المرحلة الثانية" }, { title: "وسام البطولة", target: 3, note: "إكمال المرحلة الثالثة" }].map((stage, index) => { const earned = completed >= stage.target; const current = !earned && completed + 1 === stage.target; return <article className={`badge-stage ${earned ? "earned" : current ? "current" : ""}`} key={stage.title}><span className="badge-stage-medal"><Award size={30} /></span><small>المرحلة {index + 1}</small><strong>{stage.title}</strong><p>{stage.note}</p><div className="badge-track"><i style={{ width: `${earned ? 100 : current ? Math.min(90, Math.max(12, rewards.lifetimePoints % 100)) : 0}%` }} /></div><em>{earned ? "تم الحصول عليه" : current ? "قيد التقدم" : "مرحلة قادمة"}</em></article>; })}</div><div className="mystery-boxes">{[1, 2, 3, 4, 5].map((boxIndex) => { const opened = rewards.openedBoxes.some((item) => item.boxIndex === boxIndex); const available = rewards.lifetimePoints >= boxIndex * 100; const reward = content.displayBoxRewards[(boxIndex - 1) % content.displayBoxRewards.length] ?? 10; return <button className={`mystery-box ${opened ? "opened" : available ? "available" : ""}`} disabled={!available || opened} key={boxIndex} onClick={() => onOpenBox({ boxIndex, reward })}><Box size={28} /><strong>{opened ? "مفتوح" : `صندوق ${boxIndex}`}</strong><span>{available ? "اضغط للفتح" : `${boxIndex * 100} نقطة`}</span></button>; })}</div></div>}
