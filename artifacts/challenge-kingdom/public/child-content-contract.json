@@ -68,8 +68,8 @@
       {"id":"late-night","title":"نصف ساعة إضافية قبل النوم","cost":25,"kind":"screen"},
       {"id":"small-toy","title":"لعبة صغيرة أو ملصقات","cost":25,"kind":"treat"}
     ],
-    "majorBoxRewards": [50,75,100],
-    "displayBoxRewards": [10,15],
+    "majorBoxRewards": [50,100,150],
+    "displayBoxRewards": [15,25],
     "pointRewards": {"letterAnswer":2,"numberAnswer":1,"readingStory":5}
   },
   "cases": [

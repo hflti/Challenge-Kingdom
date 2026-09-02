@@ -1768,6 +1768,21 @@ function App() {
     }));
   };
 
+  const updateBoxReward = (kind: "major" | "display", index: number, value: number) => {
+    localMutationRef.current += 1;
+    const safeValue = Number.isFinite(value) ? Math.min(10000, Math.max(1, Math.round(value))) : 1;
+    setSaved((current) => {
+      const key = kind === "major" ? "majorBoxRewards" : "displayBoxRewards";
+      return {
+        ...current,
+        childContent: {
+          ...current.childContent,
+          [key]: current.childContent[key].map((item, itemIndex) => itemIndex === index ? safeValue : item),
+        },
+      };
+    });
+  };
+
   const uploadRewardImage = async (index: number, file: File) => {
     const token = memberTokenRef.current;
     if (!token || memberRoleRef.current !== "owner") throw new Error("مرصد الوالدين وحده يستطيع تغيير صور المكافآت.");
@@ -1838,10 +1853,9 @@ function App() {
     if (!profile || !Number.isFinite(reward) || reward < 0 || !Number.isInteger(giftIndex)) return;
     setSaved((current) => {
       const currentRewards = current.childRewards[profile.id] ?? defaultChildRewards;
-      if (currentRewards.badgeCount < 3) return current;
+      if (currentRewards.badgeCount < 3 || !current.childContent.majorBoxRewards.includes(reward)) return current;
       return {
         ...current,
-        points: { ...current.points, [profile.id]: (current.points[profile.id] ?? 0) + Math.floor(reward) },
         childRewards: {
           ...current.childRewards,
           [profile.id]: { ...currentRewards, badgeCount: 0 },
@@ -2034,7 +2048,7 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset }, profilePhotos: { ...current.profilePhotos, [profileId]: "" } }))} onUploadPhoto={uploadProfilePhoto} onUpdateReward={updateReward} onUploadRewardImage={uploadRewardImage} />
+              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset }, profilePhotos: { ...current.profilePhotos, [profileId]: "" } }))} onUploadPhoto={uploadProfilePhoto} onUpdateReward={updateReward} onUpdateBoxReward={updateBoxReward} onUploadRewardImage={uploadRewardImage} />
             ) : screen === "home" ? (
               <HomeView profile={activeProfile} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onStartStory={startReadingChallenge} onCreateMission={(...args) => requestChildUnlock(() => createMission(...args))} onDeleteMission={(missionId) => requestChildUnlock(() => deleteMission(missionId))} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onOpenBadge={openBadge} onSelectGift={selectGift} onAwardExtraPoints={awardExtraPoints} onFinishStory={finishReadingStory} onRequestUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
@@ -2736,6 +2750,7 @@ function ParentView({
   onChooseAvatar,
   onUploadPhoto,
   onUpdateReward,
+  onUpdateBoxReward,
   onUploadRewardImage,
 }: {
   profiles: Profile[];
@@ -2746,6 +2761,7 @@ function ParentView({
   onChooseAvatar: (profileId: ProfileId, preset: string) => void;
   onUploadPhoto: (profileId: ProfileId, file: File) => Promise<void>;
   onUpdateReward: (index: number, patch: Partial<ChildContentConfig["storeItems"][number]>) => void;
+  onUpdateBoxReward: (kind: "major" | "display", index: number, value: number) => void;
   onUploadRewardImage: (index: number, file: File) => Promise<void>;
 }) {
   const total = dynamicProfiles.reduce((sum, item) => sum + (saved.completed[item.id] ?? 0), 0);
@@ -2760,6 +2776,16 @@ function ParentView({
       </section>
       <section className="parent-rewards-editor panel" data-testid="panel-parent-rewards">
         <div className="panel-top"><div><h2 className="panel-title">إعداد مكافآت الأطفال</h2><p className="panel-subtitle">هذه الإعدادات متاحة للوالدين فقط، وتتزامن مع متجر الأطفال على جميع الأجهزة.</p></div><ShoppingBag color="hsl(var(--primary))" /></div>
+         <div className="parent-box-rewards-settings">
+           <div className="parent-box-rewards-group">
+             <div><h3>هدايا اختيار الطفل</h3><p>تظهر هذه الهدايا الثلاث فقط بعد فتح الأوسمة الثلاثة، ويختار الطفل واحدة منها.</p></div>
+             <div className="parent-box-reward-fields">{saved.childContent.majorBoxRewards.map((reward, index) => <label className="admin-field" key={`major-${index}`}><span>هدية الاختيار {index + 1} (بالريال)</span><input className="admin-input" type="number" min={1} max={10000} value={reward} onChange={(event) => onUpdateBoxReward("major", index, Number(event.target.value))} /></label>)}</div>
+           </div>
+           <div className="parent-box-rewards-group">
+             <div><h3>هدايا غير قابلة للاختيار</h3><p>تظل هذه الهدايا مخفية عن الطفل ولا تظهر ضمن الخيارات الثلاثة.</p></div>
+             <div className="parent-box-reward-fields">{saved.childContent.displayBoxRewards.map((reward, index) => <label className="admin-field" key={`display-${index}`}><span>هدية غير قابلة للاختيار {index + 1} (بالريال)</span><input className="admin-input" type="number" min={1} max={10000} value={reward} onChange={(event) => onUpdateBoxReward("display", index, Number(event.target.value))} /></label>)}</div>
+           </div>
+         </div>
         <div className="parent-rewards-grid">
           {saved.childContent.storeItems.map((item, index) => (
             <article className="parent-reward-card" key={item.id}>

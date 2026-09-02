@@ -109,8 +109,8 @@ export const defaultChildContent: ChildContentConfig = {
     { id: "late-night", title: "نصف ساعة إضافية قبل النوم", cost: 25, kind: "screen" },
     { id: "small-toy", title: "لعبة صغيرة أو ملصقات", cost: 25, kind: "treat" },
   ],
-  majorBoxRewards: [50, 75, 100],
-  displayBoxRewards: [10, 15],
+  majorBoxRewards: [50, 100, 150],
+  displayBoxRewards: [15, 25],
   pointRewards: { letterAnswer: 2, numberAnswer: 1, readingStory: 5 },
 };
 
@@ -290,13 +290,17 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
   const rewards = (list: unknown, fallback: number[]) => Array.isArray(list) && list.length === fallback.length && list.every((item) => typeof item === "number" && Number.isFinite(item))
     ? list.map((item) => Math.min(10000, Math.max(1, Math.round(item as number))))
     : fallback;
+  const majorBoxRewards = rewards(candidate.majorBoxRewards, defaultChildContent.majorBoxRewards);
+  const displayBoxRewards = rewards(candidate.displayBoxRewards, defaultChildContent.displayBoxRewards);
+  const isLegacyMajorDefaults = majorBoxRewards.join(",") === "50,75,100";
+  const isLegacyDisplayDefaults = displayBoxRewards.join(",") === "10,15";
   const normalized = {
     letterGames,
     numberQuestions,
     readingStories,
     storeItems,
-    majorBoxRewards: rewards(candidate.majorBoxRewards, defaultChildContent.majorBoxRewards),
-    displayBoxRewards: rewards(candidate.displayBoxRewards, defaultChildContent.displayBoxRewards),
+    majorBoxRewards: isLegacyMajorDefaults ? defaultChildContent.majorBoxRewards : majorBoxRewards,
+    displayBoxRewards: isLegacyDisplayDefaults ? defaultChildContent.displayBoxRewards : displayBoxRewards,
     pointRewards: {
       letterAnswer: typeof candidate.pointRewards?.letterAnswer === "number" ? Math.min(rules.pointRewardMax, Math.max(rules.pointRewardMin, Math.round(candidate.pointRewards.letterAnswer))) : defaultChildContent.pointRewards.letterAnswer,
       numberAnswer: typeof candidate.pointRewards?.numberAnswer === "number" ? Math.min(rules.pointRewardMax, Math.max(rules.pointRewardMin, Math.round(candidate.pointRewards.numberAnswer))) : defaultChildContent.pointRewards.numberAnswer,
