@@ -1596,6 +1596,7 @@ function App() {
         [profile.id]: {
           ...(saved.childRewards[profile.id] ?? defaultChildRewards),
           lifetimePoints: (saved.childRewards[profile.id]?.lifetimePoints ?? currentPoints) + earned,
+          challengePoints: (saved.childRewards[profile.id]?.challengePoints ?? 0) + earned,
         },
       },
     };
@@ -1813,6 +1814,43 @@ function App() {
     playSound("success");
   };
 
+  const openBadge = (stage: number) => {
+    if (!profile || !Number.isInteger(stage) || stage < 1 || stage > 3) return;
+    setSaved((current) => {
+      const currentRewards = current.childRewards[profile.id] ?? defaultChildRewards;
+      const currentPoints = current.points[profile.id] ?? 0;
+      if (currentRewards.badgeCount !== stage - 1 || currentRewards.challengePoints < 120 || currentPoints < 120) return current;
+      const nextRewards = {
+        ...currentRewards,
+        badgeCount: stage,
+        challengePoints: currentRewards.challengePoints - 120,
+      };
+      return {
+        ...current,
+        points: { ...current.points, [profile.id]: currentPoints - 120 },
+        childRewards: { ...current.childRewards, [profile.id]: nextRewards },
+      };
+    });
+    playSound("success");
+  };
+
+  const selectGift = (reward: number, giftIndex: number) => {
+    if (!profile || !Number.isFinite(reward) || reward < 0 || !Number.isInteger(giftIndex)) return;
+    setSaved((current) => {
+      const currentRewards = current.childRewards[profile.id] ?? defaultChildRewards;
+      if (currentRewards.badgeCount < 3) return current;
+      return {
+        ...current,
+        points: { ...current.points, [profile.id]: (current.points[profile.id] ?? 0) + Math.floor(reward) },
+        childRewards: {
+          ...current.childRewards,
+          [profile.id]: { ...currentRewards, badgeCount: 0 },
+        },
+      };
+    });
+    playSound("success");
+  };
+
   const finishReadingStory = async (code: string): Promise<{ ok: boolean; error?: string }> => {
     if (!profile || !owner) return { ok: false, error: "أضف ولي أمر من لوحة الإدارة أولاً." };
     try {
@@ -1998,7 +2036,7 @@ function App() {
             {tab === "parent" && screen === "home" ? (
               <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset }, profilePhotos: { ...current.profilePhotos, [profileId]: "" } }))} onUploadPhoto={uploadProfilePhoto} onUpdateReward={updateReward} onUploadRewardImage={uploadRewardImage} />
             ) : screen === "home" ? (
-              <HomeView profile={activeProfile} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onStartStory={startReadingChallenge} onCreateMission={(...args) => requestChildUnlock(() => createMission(...args))} onDeleteMission={(missionId) => requestChildUnlock(() => deleteMission(missionId))} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onFinishStory={finishReadingStory} onRequestUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
+              <HomeView profile={activeProfile} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onStartStory={startReadingChallenge} onCreateMission={(...args) => requestChildUnlock(() => createMission(...args))} onDeleteMission={(missionId) => requestChildUnlock(() => deleteMission(missionId))} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onOpenBadge={openBadge} onSelectGift={selectGift} onAwardExtraPoints={awardExtraPoints} onFinishStory={finishReadingStory} onRequestUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} avatar={saved.profilePhotos[activeProfile.id] ?? avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onCancelBeforeStart={newChallenge} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
@@ -2234,6 +2272,8 @@ function HomeView({
   missions: availableMissions,
   onStart,
   onStartStory,
+  onOpenBadge,
+  onSelectGift,
   onCreateMission,
   onDeleteMission,
   onResetMap,
@@ -2254,6 +2294,8 @@ function HomeView({
   missions: Mission[];
   onStart: (mission: Mission) => void;
   onStartStory: (story: ReadingStoryContent, durationMinutes: number, rewardPoints: number) => void;
+  onOpenBadge: (stage: number) => void;
+  onSelectGift: (reward: number, giftIndex: number) => void;
   onCreateMission: (title: string, durationMinutes: number, rewardPoints: number) => void;
   onDeleteMission: (missionId: string) => void;
   onResetMap: (code: string) => Promise<boolean>;
@@ -2378,7 +2420,7 @@ function HomeView({
             </div>}
         </div>
       </section>
-      <ChildExtras content={childContent} points={points} completed={completed} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onFinishStory={onFinishStory} onStartStory={onStartStory} onRequestUnlock={onRequestUnlock} />
+      <ChildExtras content={childContent} points={points} completed={completed} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onOpenBadge={onOpenBadge} onSelectGift={onSelectGift} onAwardPoints={onAwardExtraPoints} onFinishStory={onFinishStory} onStartStory={onStartStory} onRequestUnlock={onRequestUnlock} />
     </>
   );
 }
