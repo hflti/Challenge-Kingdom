@@ -1330,21 +1330,29 @@ function App() {
   const verifyProfileAccess = async () => {
     const action = profileAccessAction;
     const target = profileAccessTarget;
-    const childId = action === "enter" ? target : action === "protected-feature" ? selectedId : null;
-    const member = childId ? familyMembers.find((item) => item.id === childId && item.role === "child") : owner;
-    if (!member) { setProfileAccessError(action === "enter" || action === "protected-feature" ? "هذا الملف غير متاح." : "أضف ولي أمر من لوحة الإدارة أولاً."); return; }
-    try {
-      const session = await accountsApi.verifyMember(familyUsername, familyCode, member.id, profileAccessCode, action === "enter" || action === "protected-feature" ? "child" : "owner");
-      if (action !== "protected-feature") {
-        memberTokenRef.current = session.token;
-        memberRoleRef.current = session.role;
-        setMemberToken(session.token);
+    const enteredCode = profileAccessCode.trim();
+    if (action === "protected-feature") {
+      if (enteredCode !== familyCode.trim()) {
+        setProfileAccessCode("");
+        setProfileAccessError("رمز المملكة غير صحيح. حاول مرة أخرى.");
+        return;
       }
-      const onUnlocked = action === "protected-feature" ? pendingChildUnlockRef.current : null;
+      const onUnlocked = pendingChildUnlockRef.current;
       pendingChildUnlockRef.current = null;
       cancelProfileAccess();
+      onUnlocked?.();
+      return;
+    }
+    const childId = action === "enter" ? target : null;
+    const member = childId ? familyMembers.find((item) => item.id === childId && item.role === "child") : owner;
+    if (!member) { setProfileAccessError(action === "enter" ? "هذا الملف غير متاح." : "أضف ولي أمر من لوحة الإدارة أولاً."); return; }
+    try {
+      const session = await accountsApi.verifyMember(familyUsername, familyCode, member.id, enteredCode, action === "enter" ? "child" : "owner");
+      memberTokenRef.current = session.token;
+      memberRoleRef.current = session.role;
+      setMemberToken(session.token);
+      cancelProfileAccess();
       if (action === "enter" && target) chooseProfile(target);
-      else if (action === "protected-feature") onUnlocked?.();
       else if (action === "switch") {
         setScreen("choose");
         memberTokenRef.current = null;
@@ -1353,7 +1361,7 @@ function App() {
         cloudReadyRef.current = false;
       }
       else if (action === "parent") { setTab("parent"); setScreen("home"); }
-      if (action !== "switch" && action !== "protected-feature") void pullCloudState(true);
+      if (action !== "switch") void pullCloudState(true);
     } catch (cause) {
       if (isFamilySessionFailure(cause)) {
         clearMemberSession(expiredFamilySessionNotice);
@@ -1483,7 +1491,7 @@ function App() {
     if (timeUp && (alertSeconds > 0 || graceSeconds <= 0)) return;
     if (!owner) { setFinishCodeError("أضف ولي أمر من لوحة الإدارة أولاً."); return; }
     try {
-      const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, finishCode, "owner");
+      const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, finishCode.trim(), "owner");
       memberTokenRef.current = session.token; setMemberToken(session.token);
       memberRoleRef.current = session.role;
     } catch (cause) {
@@ -1769,7 +1777,7 @@ function App() {
   const resetMap = async (enteredCode: string) => {
     if (!profile || !owner) return false;
     try {
-      const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, enteredCode, "owner");
+      const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, enteredCode.trim(), "owner");
       memberTokenRef.current = session.token; setMemberToken(session.token);
       memberRoleRef.current = session.role;
       void pullCloudState(true);
@@ -2106,6 +2114,8 @@ function ProfileAccessGate({
             type="password"
             name="member_access_code"
             autoComplete="new-password"
+            minLength={4}
+            maxLength={64}
             value={code}
              onChange={(event) => onCode(event.target.value)}
             aria-describedby={error ? "profile-access-error" : undefined}
