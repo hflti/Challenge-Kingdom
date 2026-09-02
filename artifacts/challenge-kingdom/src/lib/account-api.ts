@@ -86,12 +86,10 @@ export const accountsApi = {
   saveAdminContent: (token: string, familyId: string, content: ChildContentConfig) =>
     request<{ content: ChildContentConfig }>("admin-content", { method: "POST", token, body: { familyId, content } }),
   createMember: (token: string, input: {
-    familyId: string; role: MemberRole; name: string; code: string; grade?: string; title?: string; quote?: string; color?: string;
+    familyId: string; role: MemberRole; name: string; grade?: string; title?: string; quote?: string; color?: string;
   }) => request<unknown>("admin-create-member", { method: "POST", token, body: input }),
   deleteMember: (token: string, familyId: string, memberId: string) =>
     request<unknown>("admin-delete-member", { method: "POST", token, body: { familyId, memberId, confirm: true } }),
-  changeMemberCode: (token: string, familyId: string, memberId: string, newCode: string) =>
-    request<unknown>("admin-change-member-code", { method: "POST", token, body: { familyId, memberId, newCode } }),
   changeFamilyCode: (token: string, familyId: string, newCode: string) =>
     request<unknown>("admin-change-family-code", { method: "POST", token, body: { familyId, newCode } }),
   changeFamilyName: (token: string, familyId: string, name: string) =>

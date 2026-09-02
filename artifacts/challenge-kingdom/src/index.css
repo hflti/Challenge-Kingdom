@@ -267,13 +267,13 @@
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
 .section-heading h2 { margin: 0; font-family: var(--app-font-serif); color: hsl(var(--secondary)); font-size: 28px; }
 .section-heading p { margin: 0 0 2px; color: hsl(var(--muted-foreground)); font-size: 12px; }
-.mission-composer { background: hsl(var(--card)); border: 1px solid hsl(var(--card-border)); border-radius: 18px; padding: 16px; margin-bottom: 14px; box-shadow: var(--shadow-soft); }
+.mission-composer { background: hsl(var(--card)); border: 1px solid hsl(var(--card-border)); border-radius: 14px; padding: 10px 12px; margin-bottom: 14px; box-shadow: 0 4px 12px rgba(57,53,91,.05); }
 .composer-copy { display: flex; align-items: center; gap: 10px; }
 .composer-copy strong, .composer-copy span { display: block; }
 .composer-copy strong { color: hsl(var(--secondary)); font-size: 13px; }
 .composer-copy span { color: hsl(var(--muted-foreground)); font-size: 11px; margin-top: 3px; }
 .composer-icon { width: 36px; height: 36px; flex: 0 0 auto; border-radius: 11px; background: rgba(234,75,94,.12); color: hsl(var(--primary)); display: grid; place-items: center; }
-.composer-fields { display: grid; grid-template-columns: minmax(0, 1fr) 150px auto; align-items: end; gap: 10px; margin-top: 14px; }
+.composer-fields { display: grid; grid-template-columns: minmax(0, 1fr) 110px 100px auto; align-items: end; gap: 8px; }
 .composer-fields label { display: block; }
 .composer-fields label > span, .finish-code-box label { display: block; color: hsl(var(--muted-foreground)); font-size: 10px; margin-bottom: 6px; }
 .composer-fields input { width: 100%; min-height: 43px; box-sizing: border-box; border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 0 12px; color: hsl(var(--foreground)); background: hsl(var(--background)); }
@@ -322,6 +322,10 @@
 .mission-card:disabled { opacity: .58; cursor: not-allowed; }
 .mission-card:disabled:hover { transform: none; box-shadow: none; border-color: hsl(var(--card-border)); }
 .mission-card.featured { background: hsl(var(--secondary)); color: hsl(var(--primary-foreground)); border-color: hsl(var(--secondary)); min-height: 190px; }
+.mission-card.latest-custom-mission { background: linear-gradient(145deg, #eef8ff, #dff2eb); border: 2px solid #39a57d; box-shadow: 0 8px 20px rgba(57,165,125,.18); }
+.mission-card.latest-custom-mission .mission-icon { background: #39a57d; color: white; }
+.mission-card.latest-custom-mission h3 { color: #17634c; }
+.mission-reward { display: inline-flex; margin-top: 9px; border-radius: 999px; padding: 4px 7px; background: rgba(57,165,125,.13); color: #17634c; font-size: 10px; font-weight: 800; }
 .mission-card.featured::before { content: ''; width: 90px; height: 90px; position: absolute; left: -24px; bottom: -27px; border-radius: 50%; border: 1px solid rgba(244,190,57,.33); box-shadow: 0 0 0 12px rgba(244,190,57,.07); }
 .mission-top { display: flex; justify-content: space-between; align-items: start; }
 .mission-icon { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; color: hsl(var(--secondary)); background: hsl(var(--accent)); }
@@ -1262,7 +1266,7 @@
   .hero-card { min-height: 300px; padding: 22px; }.hero-copy { max-width: 100%; }.hero-figure { left: 4px; opacity: .55; transform: scale(.82); transform-origin: bottom left; }.hero-cta { margin-top: 14px; }
   .stats-strip { gap: 7px; }.stat-card { padding: 12px 9px; }.stat-value { font-size: 22px; }.stat-note { display: block; margin: 4px 0 0; }
   .missions-grid { grid-template-columns: 1fr; }.mission-card, .mission-card.featured { min-height: 126px; }.mission-card h3 { margin-top: 12px; }
-  .composer-fields { grid-template-columns: 1fr 118px; }.composer-fields .primary-button { grid-column: 1 / -1; width: 100%; }
+  .composer-fields { grid-template-columns: minmax(0, 1fr) 92px 78px; }.composer-fields .primary-button { grid-column: 1 / -1; width: 100%; }
   .profile-grid { grid-template-columns: 1fr; max-width: 360px; gap: 14px; }.profile-card { padding: 19px; }.profile-card .quote { min-height: auto; }.choose-intro { margin: 50px 0 24px; }.choose-foot { padding-top: 30px; }
   .quest-layout { margin-top: 14px; }.quest-card { padding: 23px 15px; }.quest-card h1 { font-size: 37px; }.timer-shell { width: 220px; }.battle-aside { grid-template-columns: 1fr; }.monster-card { min-height: 168px; }
   .time-up-actions .primary-button, .time-up-actions .outline-button { width: 100%; }

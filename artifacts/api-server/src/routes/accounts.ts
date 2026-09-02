@@ -305,7 +305,7 @@ router.post("/accounts", async (req, res): Promise<void> => {
       return;
     }
     const [member] = await db.select().from(membersTable).where(and(eq(membersTable.id, body.memberId), eq(membersTable.familyId, family.id)));
-    if (!member || (body.role !== undefined && member.role !== body.role) || !sameHash(hashCode(body.code), member.codeHash)) {
+    if (!member || (body.role !== undefined && member.role !== body.role) || !sameHash(hashCode(body.code), family.familyKey)) {
       failed(req, "verify-member");
       res.status(401).json({ error: "Invalid member credentials." });
       return;
@@ -394,7 +394,6 @@ router.post("/accounts", async (req, res): Promise<void> => {
             points: {},
             customMissions: {},
             childRewards: {},
-            extraChallenge: { title: "التحدي الإضافي", duration: 600, rewardPoints: 10 },
             childContent: content,
           },
           activeChallenges: {},
@@ -504,7 +503,7 @@ router.post("/accounts", async (req, res): Promise<void> => {
 
   if (action === "admin-create-member") {
     const role = body.role;
-    if (!validText(body.familyId, 128) || (role !== "owner" && role !== "child") || !validText(body.name, 120) || !validCode(body.code)) {
+    if (!validText(body.familyId, 128) || (role !== "owner" && role !== "child") || !validText(body.name, 120)) {
       res.status(400).json({ error: "Invalid member details." });
       return;
     }
@@ -515,7 +514,6 @@ router.post("/accounts", async (req, res): Promise<void> => {
     }
     const familyId = body.familyId;
     const name = body.name;
-    const code = body.code;
     const result = await db.transaction(async (tx) => {
       const [family] = await tx.select().from(familiesTable).where(eq(familiesTable.id, familyId));
       if (!family) return "family-missing" as const;
@@ -528,7 +526,7 @@ router.post("/accounts", async (req, res): Promise<void> => {
         familyId: family.id,
         role,
         name: name.trim(),
-        codeHash: hashCode(code),
+        codeHash: family.familyKey,
         grade: optional[0],
         title: optional[1],
         quote: optional[2],
@@ -545,24 +543,6 @@ router.post("/accounts", async (req, res): Promise<void> => {
       return;
     }
     res.status(201).json({ member: memberMetadata(result) });
-    return;
-  }
-
-  if (action === "admin-change-member-code") {
-    if (!validText(body.familyId, 128) || !validText(body.memberId, 128) || !validCode(body.newCode)) {
-      res.status(400).json({ error: "Invalid code change request." });
-      return;
-    }
-    const familyId = body.familyId;
-    const memberId = body.memberId;
-    const newCode = body.newCode;
-    const [member] = await db.update(membersTable).set({ codeHash: hashCode(newCode), credentialVersion: sql`${membersTable.credentialVersion} + 1`, updatedAt: new Date() })
-      .where(and(eq(membersTable.id, memberId), eq(membersTable.familyId, familyId))).returning();
-    if (!member) {
-      res.status(404).json({ error: "Member not found." });
-      return;
-    }
-    res.json({ ok: true });
     return;
   }
 
@@ -629,6 +609,11 @@ router.post("/accounts", async (req, res): Promise<void> => {
       if (stateCollision && stateCollision.familyKey !== family.familyKey) return "collision" as const;
       await tx.update(familiesTable).set({ familyKey: newKey, updatedAt: new Date() }).where(eq(familiesTable.id, family.id));
       await tx.update(kingdomStatesTable).set({ familyKey: newKey, updatedAt: new Date() }).where(eq(kingdomStatesTable.familyKey, family.familyKey));
+      await tx.update(membersTable).set({
+        codeHash: newKey,
+        credentialVersion: sql`${membersTable.credentialVersion} + 1`,
+        updatedAt: new Date(),
+      }).where(eq(membersTable.familyId, family.id));
       return "ok" as const;
     });
     if (changed === "missing") {

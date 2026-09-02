@@ -112,25 +112,11 @@ const profiles: Profile[] = [
 const missions: Mission[] = [
   {
     id: "deep-focus",
-    title: "غوصة التركيز",
+    title: "تركيز الواجب",
     description: "حل الواجب الأصعب بهدوء، واترك الملل خارج القلعة.",
     duration: 8 * 60,
     icon: Swords,
     featured: true,
-  },
-  {
-    id: "reading-trail",
-    title: "درب الحروف",
-    description: "اقرأ صفحتين بصوت واضح واستخرج ثلاث كلمات جديدة.",
-    duration: 10 * 60,
-    icon: BookOpen,
-  },
-  {
-    id: "number-cave",
-    title: "كهف الأرقام",
-    description: "أنجز خمس مسائل حسابية من دون استعجال.",
-    duration: 12 * 60,
-    icon: Compass,
   },
 ];
 
@@ -141,7 +127,6 @@ type SavedState = {
   customMissions: Record<ProfileId, SavedMission[]>;
   childRewards: Record<ProfileId, ChildRewardsState>;
   childContent: ChildContentConfig;
-  extraChallenge: ExtraChallengeSettings;
   /** Preset IDs only: illustrated avatars are never uploaded or stored as bytes. */
   profileAvatars: Record<ProfileId, string>;
 };
@@ -153,12 +138,6 @@ type SavedMission = {
   duration: number;
   rewardPoints?: number;
   requiresCode?: boolean;
-};
-
-type ExtraChallengeSettings = {
-  title: string;
-  duration: number;
-  rewardPoints: number;
 };
 
 type SoundPreferences = {
@@ -219,7 +198,6 @@ const pauseRechargeIntervalSeconds = 5 * 60;
 const pauseRechargeAmountSeconds = 30;
 const timeUpAlertSeconds = 15;
 const timeUpDecisionSeconds = 120;
-const defaultExtraChallenge: ExtraChallengeSettings = { title: "التحدي الإضافي", duration: 10 * 60, rewardPoints: 10 };
 const avatarPresets = [
   { id: "knight", symbol: "🛡️", label: "الفارس" },
   { id: "astronaut", symbol: "🚀", label: "رائد الفضاء" },
@@ -244,7 +222,6 @@ function readSavedState(): SavedState {
     customMissions: { ayham: [], kinan: [] },
     childRewards: { ayham: defaultChildRewards, kinan: defaultChildRewards },
     childContent: defaultChildContent,
-    extraChallenge: defaultExtraChallenge,
     profileAvatars: { ayham: "knight", kinan: "astronaut" },
   };
   try {
@@ -260,11 +237,6 @@ function readSavedState(): SavedState {
       childRewards: Object.fromEntries(Object.entries({ ...fallback.childRewards, ...(parsed.childRewards ?? {}) }).map(([id, value]) => [id, normalizeChildRewards(value)])),
       profileAvatars: { ...fallback.profileAvatars, ...(parsed.profileAvatars ?? {}) },
       childContent: normalizeChildContent(parsed.childContent),
-      extraChallenge: {
-        title: typeof parsed.extraChallenge?.title === "string" && parsed.extraChallenge.title.trim() ? parsed.extraChallenge.title.trim() : fallback.extraChallenge.title,
-        duration: typeof parsed.extraChallenge?.duration === "number" ? parsed.extraChallenge.duration : fallback.extraChallenge.duration,
-        rewardPoints: typeof parsed.extraChallenge?.rewardPoints === "number" ? parsed.extraChallenge.rewardPoints : fallback.extraChallenge.rewardPoints,
-      },
     };
   } catch {
     return fallback;
@@ -301,7 +273,6 @@ function toSyncedKingdomState(state: SavedState): SyncedKingdomState {
     customMissions: state.customMissions,
     childRewards: state.childRewards,
     childContent: state.childContent,
-    extraChallenge: state.extraChallenge,
     profileAvatars: state.profileAvatars,
   };
 }
@@ -322,11 +293,6 @@ function normalizeSyncedKingdomState(value: unknown): SyncedKingdomState | null 
     childRewards: Object.fromEntries(Object.entries(candidate.childRewards ?? {}).map(([id, value]) => [id, normalizeChildRewards(value)])),
     profileAvatars: isProfileRecord(candidate.profileAvatars) ? Object.fromEntries(Object.entries(candidate.profileAvatars).filter(([, preset]) => typeof preset === "string")) : {},
     childContent: normalizeChildContent(candidate.childContent),
-    extraChallenge: {
-      title: typeof candidate.extraChallenge?.title === "string" && candidate.extraChallenge.title.trim() ? candidate.extraChallenge.title.trim() : defaultExtraChallenge.title,
-      duration: typeof candidate.extraChallenge?.duration === "number" ? candidate.extraChallenge.duration : defaultExtraChallenge.duration,
-      rewardPoints: typeof candidate.extraChallenge?.rewardPoints === "number" ? candidate.extraChallenge.rewardPoints : defaultExtraChallenge.rewardPoints,
-    },
   };
 }
 
@@ -658,13 +624,6 @@ function App() {
   const [profileAccessTarget, setProfileAccessTarget] = useState<ProfileId | null>(null);
   const [profileAccessCode, setProfileAccessCode] = useState("");
   const [profileAccessError, setProfileAccessError] = useState("");
-  const [lockedMission, setLockedMission] = useState<Mission | null>(null);
-  const [unlockCode, setUnlockCode] = useState("");
-  const [unlockCodeError, setUnlockCodeError] = useState("");
-  const [extraSetupOpen, setExtraSetupOpen] = useState(false);
-  const [extraSetupMinutes, setExtraSetupMinutes] = useState("");
-  const [extraSetupPoints, setExtraSetupPoints] = useState("");
-  const [extraSetupError, setExtraSetupError] = useState("");
   const [familyCode, setFamilyCode] = useState("");
   const [familyUsername, setFamilyUsername] = useState("");
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
@@ -714,17 +673,8 @@ function App() {
     () => [
       ...missions,
       ...(selectedId ? (saved.customMissions[selectedId] ?? []).map((item) => ({ ...item, icon: PenLine })) : []),
-      {
-        id: "extra-challenge",
-        title: saved.extraChallenge.title,
-        description: "تحدٍ خاص يفتحه ولي الأمر بالرمز، ومكافأته يحددها القائد.",
-        duration: saved.extraChallenge.duration,
-        rewardPoints: saved.extraChallenge.rewardPoints,
-        requiresCode: true,
-        icon: KeyRound,
-      },
     ],
-    [saved.customMissions, saved.extraChallenge, selectedId],
+    [saved.customMissions, selectedId],
   );
 
   const applyActiveChallenge = useCallback((active: ActiveChallenge | null) => {
@@ -873,7 +823,6 @@ function App() {
               points: { [selectedId]: savedRef.current.points[selectedId] ?? 0 },
               customMissions: { [selectedId]: savedRef.current.customMissions[selectedId] ?? [] },
               childRewards: { [selectedId]: savedRef.current.childRewards[selectedId] ?? defaultChildRewards },
-              extraChallenge: {},
             }
           : toSyncedKingdomState(savedRef.current);
         const challengesForSave = isChildInitialState
@@ -1234,9 +1183,6 @@ function App() {
   const chooseProfile = (id: ProfileId) => {
     const active = restoreActiveChallenge(activeChallenges[id]);
     setSelectedId(id);
-    setLockedMission(null);
-    setUnlockCode("");
-    setUnlockCodeError("");
     setTab("quest");
     setScreen(active ? (active.approvalStatus ? "gate" : "quest") : "home");
     setFinishCodeOpen(false);
@@ -1345,59 +1291,8 @@ function App() {
 
   const requestMissionStart = (nextMission: Mission) => {
     requestChildUnlock(() => {
-      if (!nextMission.requiresCode) {
-        startMission(nextMission);
-        return;
-      }
-      setLockedMission(nextMission);
-      setUnlockCode("");
-      setUnlockCodeError("");
+      startMission(nextMission);
     });
-  };
-
-  const unlockExtraChallenge = async () => {
-    if (!lockedMission) return;
-    if (!owner) { setUnlockCodeError("أضف ولي أمر من لوحة الإدارة أولاً."); return; }
-    try {
-      const session = await accountsApi.verifyMember(familyUsername, familyCode, owner.id, unlockCode, "owner");
-      memberTokenRef.current = session.token; setMemberToken(session.token);
-      memberRoleRef.current = session.role;
-      void pullCloudState(true);
-    } catch { setUnlockCode(""); setUnlockCodeError("الرمز غير صحيح. اطلب مساعدة ولي الأمر."); return; }
-    const nextMission = lockedMission;
-    setUnlockCode("");
-    setUnlockCodeError("");
-    setExtraSetupMinutes(String(Math.max(1, Math.round(nextMission.duration / 60))));
-    setExtraSetupPoints(String(nextMission.rewardPoints ?? defaultExtraChallenge.rewardPoints));
-    setExtraSetupError("");
-    setExtraSetupOpen(true);
-  };
-
-  const startCustomizedExtraChallenge = () => {
-    if (!lockedMission) return;
-    const minutes = Number(extraSetupMinutes);
-    const rewardPoints = Number(extraSetupPoints);
-    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
-      setExtraSetupError("اختر مدة بين دقيقة واحدة وساعتين.");
-      return;
-    }
-    if (!Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 50) {
-      setExtraSetupError("اختر مكافأة بين نقطة واحدة و50 نقطة.");
-      return;
-    }
-    const nextMission = { ...lockedMission, duration: minutes * 60, rewardPoints };
-    setLockedMission(null);
-    setExtraSetupOpen(false);
-    setExtraSetupError("");
-    startMission(nextMission);
-  };
-
-  const cancelExtraChallengeUnlock = () => {
-    setLockedMission(null);
-    setUnlockCode("");
-    setUnlockCodeError("");
-    setExtraSetupOpen(false);
-    setExtraSetupError("");
   };
 
   const startTimer = () => {
@@ -1588,9 +1483,6 @@ function App() {
   const newChallenge = () => {
     setMission(null);
     setActiveChallengeId(null);
-    setLockedMission(null);
-    setUnlockCode("");
-    setUnlockCodeError("");
     setPointResult(null);
     setTimerRunning(false);
     setTimerEndsAt(null);
@@ -1640,13 +1532,14 @@ function App() {
     setScreen(mission && !pointResult ? (approvalStatus ? "gate" : "quest") : "home");
   };
 
-  const createMission = (title: string, durationMinutes: number) => {
-    if (!profile) return;
+  const createMission = (title: string, durationMinutes: number, rewardPoints: number) => {
+    if (!profile || !Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 50) return;
     const newMission: SavedMission = {
       id: `custom-${Date.now()}`,
       title,
       description: "مهمة كتبتها أنت. أنجزها كاملة قبل أن يهرب الملل.",
       duration: durationMinutes * 60,
+      rewardPoints,
     };
     setSaved((current) => ({
       ...current,
@@ -1665,13 +1558,6 @@ function App() {
         ...current.customMissions,
         [profile.id]: (current.customMissions[profile.id] ?? []).filter((item) => item.id !== missionId),
       },
-    }));
-  };
-
-  const saveExtraChallenge = (title: string, durationMinutes: number, rewardPoints: number) => {
-    setSaved((current) => ({
-      ...current,
-      extraChallenge: { title, duration: durationMinutes * 60, rewardPoints },
     }));
   };
 
@@ -1761,7 +1647,6 @@ function App() {
     setProfileAccessError("");
     pendingChildUnlockRef.current = null;
     setFinishCode("");
-    setUnlockCode("");
     cloudVersionRef.current = null;
     cloudReadyRef.current = false;
     lastCloudSignatureRef.current = null;
@@ -1875,9 +1760,9 @@ function App() {
 
           <div className="content">
             {tab === "parent" && screen === "home" ? (
-              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onSaveExtraChallenge={saveExtraChallenge} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset } }))} />
+              <ParentView profiles={availableProfiles} saved={saved} soundPreferences={soundPreferencesState} onSoundPreferencesChange={updateSoundPreferences} onChooseProfile={() => requestProfileAccess("switch")} onChooseAvatar={(profileId, preset) => setSaved((current) => ({ ...current, profileAvatars: { ...current.profileAvatars, [profileId]: preset } }))} />
             ) : screen === "home" ? (
-               <HomeView profile={activeProfile} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} lockedMission={lockedMission} unlockCode={unlockCode} unlockCodeError={unlockCodeError} extraSetupOpen={extraSetupOpen} extraSetupMinutes={extraSetupMinutes} extraSetupPoints={extraSetupPoints} extraSetupError={extraSetupError} onStart={requestMissionStart} onUnlockCode={setUnlockCode} onUnlock={unlockExtraChallenge} onCancelUnlock={cancelExtraChallengeUnlock} onExtraSetupMinutes={setExtraSetupMinutes} onExtraSetupPoints={setExtraSetupPoints} onStartCustomizedExtra={startCustomizedExtraChallenge} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onRequestChildUnlock={requestChildUnlock} onParent={() => requestProfileAccess("parent")} />
+               <HomeView profile={activeProfile} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} completed={completed} points={points} childRewards={saved.childRewards[activeProfile.id] ?? defaultChildRewards} childContent={saved.childContent} activeMission={mission && !pointResult ? mission : null} missions={profileMissions} onStart={requestMissionStart} onCreateMission={createMission} onDeleteMission={deleteMission} onResetMap={resetMap} onSpendReward={spendRewardPoints} onOpenRewardBox={openRewardBox} onAwardExtraPoints={awardExtraPoints} onParent={() => requestProfileAccess("parent")} />
             ) : screen === "quest" && mission ? (
               <QuestView mission={mission} avatar={avatarSymbol(saved.profileAvatars[activeProfile.id], activeProfile.initials)} seconds={seconds} running={timerRunning} timeUp={timeUp} extensionCount={extensionCount} pauseActive={pauseActive} pauseSeconds={pauseSeconds} pauseResumeBlockedUntil={pauseResumeBlockedUntil} alertSeconds={alertSeconds} graceSeconds={graceSeconds} finishCodeOpen={finishCodeOpen} finishCode={finishCode} error={finishCodeError} onBack={leaveMission} onCancelBeforeStart={newChallenge} onStartTimer={startTimer} onPause={pauseMission} onResume={resumeMission} onExtend={extendMission} onOpenFinishCode={() => { if (graceSeconds > 0) { setFinishCodeOpen(true); setFinishCodeError(""); } }} onOpenEarlyFinish={openEarlyFinishCode} onCancelFinishCode={closeFinishCode} onCode={setFinishCode} onVerifyCode={verifyFinishCode} />
             ) : screen === "gate" ? (
@@ -2072,9 +1957,9 @@ function ProfileAccessGate({
         <div className="profile-access-icon"><LockKeyhole size={24} /></div>
         <div className="eyebrow" style={{ justifyContent: "center" }}>بوابة العائلة</div>
          <h2 id="profile-access-title">{action === "enter" ? "افتح ملف البطل" : action === "protected-feature" ? "افتح ميزة البطل" : action === "parent" ? "افتح مرصد الوالدين" : "تأكيد تبديل البطل"}</h2>
-         <p>{action === "enter" || action === "protected-feature" ? "أدخل رمز الطفل الخاص بهذا الملف." : "أدخل رمز ولي الأمر لإكمال هذا الإجراء."}</p>
+          <p>أدخل الرمز الموحد للمملكة لإكمال هذا الإجراء.</p>
         <form onSubmit={(event) => { event.preventDefault(); onVerify(); }}>
-           <label htmlFor="profile-access-code">{action === "enter" || action === "protected-feature" ? "رمز الطفل" : "رمز ولي الأمر"}</label>
+            <label htmlFor="profile-access-code">الرمز الموحد للمملكة</label>
           <input
             id="profile-access-code"
             className="code-input"
@@ -2107,27 +1992,13 @@ function HomeView({
   childContent,
   activeMission,
   missions: availableMissions,
-  lockedMission,
-  unlockCode,
-  unlockCodeError,
-  extraSetupOpen,
-  extraSetupMinutes,
-  extraSetupPoints,
-  extraSetupError,
   onStart,
-  onUnlockCode,
-  onUnlock,
-  onCancelUnlock,
-  onExtraSetupMinutes,
-  onExtraSetupPoints,
-  onStartCustomizedExtra,
   onCreateMission,
   onDeleteMission,
   onResetMap,
   onSpendReward,
   onOpenRewardBox,
   onAwardExtraPoints,
-  onRequestChildUnlock,
   onParent,
 }: {
   profile: Profile;
@@ -2138,31 +2009,18 @@ function HomeView({
   childContent: ChildContentConfig;
   activeMission: Mission | null;
   missions: Mission[];
-  lockedMission: Mission | null;
-  unlockCode: string;
-  unlockCodeError: string;
-  extraSetupOpen: boolean;
-  extraSetupMinutes: string;
-  extraSetupPoints: string;
-  extraSetupError: string;
   onStart: (mission: Mission) => void;
-  onUnlockCode: (value: string) => void;
-  onUnlock: () => void;
-  onCancelUnlock: () => void;
-  onExtraSetupMinutes: (value: string) => void;
-  onExtraSetupPoints: (value: string) => void;
-  onStartCustomizedExtra: () => void;
-  onCreateMission: (title: string, durationMinutes: number) => void;
+  onCreateMission: (title: string, durationMinutes: number, rewardPoints: number) => void;
   onDeleteMission: (missionId: string) => void;
   onResetMap: (code: string) => Promise<boolean>;
   onSpendReward: (cost: number, itemId: string) => boolean;
   onOpenRewardBox: (opening: BoxOpening) => void;
   onAwardExtraPoints: (amount: number) => void;
-  onRequestChildUnlock: (onUnlocked: () => void) => void;
   onParent: () => void;
 }) {
   const [taskTitle, setTaskTitle] = useState("");
   const [taskMinutes, setTaskMinutes] = useState("10");
+  const [taskPoints, setTaskPoints] = useState("10");
   const [taskError, setTaskError] = useState("");
   const [resetCode, setResetCode] = useState("");
   const [resetError, setResetError] = useState("");
@@ -2179,9 +2037,15 @@ function HomeView({
       setTaskError("اختر مدة بين دقيقة واحدة وساعتين.");
       return;
     }
-    onCreateMission(title, minutes);
+    const rewardPoints = Number(taskPoints);
+    if (!Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 50) {
+      setTaskError("اختر مكافأة بين نقطة واحدة و50 نقطة.");
+      return;
+    }
+    onCreateMission(title, minutes, rewardPoints);
     setTaskTitle("");
     setTaskMinutes("10");
+    setTaskPoints("10");
     setTaskError("");
   };
 
@@ -2227,52 +2091,11 @@ function HomeView({
 
       <section className="section-block">
         <div className="section-heading"><div><h2>اختر مهمة كاملة</h2><p>كل مهمة تفتح جزءاً جديداً من الخريطة.</p></div><span className="eyebrow">محطات اليوم</span></div>
-        {lockedMission && !extraSetupOpen && (
-          <section className="challenge-unlock-card" data-testid="panel-extra-challenge-lock">
-            <div className="challenge-unlock-icon"><LockKeyhole size={23} /></div>
-            <div>
-              <strong>فتح «{lockedMission.title}»</strong>
-              <p>هذا تحدٍ خاص. أدخل رمز ولي الأمر لبدء العدّاد.</p>
-            </div>
-            <form onSubmit={(event) => { event.preventDefault(); onUnlock(); }}>
-              <label htmlFor="extra-challenge-code">رمز ولي الأمر</label>
-              <input id="extra-challenge-code" className="code-input" data-testid="input-extra-challenge-code" type="password" name="extra_challenge_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={unlockCode} onChange={(event) => onUnlockCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز فتح التحدي الإضافي" autoFocus />
-              {unlockCodeError && <p className="form-error" data-testid="status-extra-challenge-code-error">{unlockCodeError}</p>}
-              <div className="challenge-unlock-actions">
-                <button className="primary-button" type="submit" data-testid="button-unlock-extra-challenge"><KeyRound size={16} /> فتح التحدي</button>
-                <button className="outline-button" type="button" data-testid="button-cancel-extra-challenge-unlock" onClick={onCancelUnlock}><ArrowLeft size={16} /> العودة للمهام</button>
-              </div>
-            </form>
-          </section>
-        )}
-        {lockedMission && extraSetupOpen && (
-          <section className="challenge-unlock-card extra-challenge-setup-card" data-testid="panel-extra-challenge-setup">
-            <div className="challenge-unlock-icon"><TimerReset size={23} /></div>
-            <div>
-              <strong>تم فتح «{lockedMission.title}»</strong>
-              <p>اختر الوقت وعدد النقاط التي سيحصل عليها البطل قبل بدء التحدي.</p>
-            </div>
-            <form onSubmit={(event) => { event.preventDefault(); onStartCustomizedExtra(); }}>
-              <div className="extra-setup-fields">
-                <label><span>الوقت بالدقائق</span><input data-testid="input-unlocked-extra-duration" type="number" min="1" max="120" step="1" value={extraSetupMinutes} onChange={(event) => onExtraSetupMinutes(event.target.value)} /></label>
-                <label><span>النقاط المكتسبة</span><input data-testid="input-unlocked-extra-reward" type="number" min="1" max="50" step="1" value={extraSetupPoints} onChange={(event) => onExtraSetupPoints(event.target.value)} /></label>
-              </div>
-              {extraSetupError && <p className="form-error" data-testid="status-unlocked-extra-error">{extraSetupError}</p>}
-              <div className="challenge-unlock-actions">
-                <button className="primary-button" type="submit" data-testid="button-start-customized-extra"><Play size={16} /> بدء التحدي</button>
-                <button className="outline-button" type="button" data-testid="button-cancel-extra-setup" onClick={onCancelUnlock}><ArrowLeft size={16} /> العودة للمهام</button>
-              </div>
-            </form>
-          </section>
-        )}
         <form className="mission-composer" onSubmit={submitMission} data-testid="form-create-mission">
-          <div className="composer-copy">
-            <div className="composer-icon"><PenLine size={18} /></div>
-            <div><strong>اكتب مهمة اليوم</strong><span>المهمة يجب أن تكون كاملة: صفحة، تدريب، أو واجب واضح.</span></div>
-          </div>
           <div className="composer-fields">
-            <label><span>اسم المهمة</span><input data-testid="input-mission-title" value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="مثال: حل صفحة الرياضيات كاملة" /></label>
-            <label className="minutes-field"><span>الوقت بالدقائق</span><input data-testid="input-mission-duration" type="number" min="1" max="120" step="1" value={taskMinutes} onChange={(event) => setTaskMinutes(event.target.value)} /></label>
+            <label><span>اسم المهمة</span><input data-testid="input-mission-title" value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="مهمة جديدة" /></label>
+            <label className="minutes-field"><span>الدقائق</span><input data-testid="input-mission-duration" type="number" min="1" max="120" step="1" value={taskMinutes} onChange={(event) => setTaskMinutes(event.target.value)} /></label>
+            <label className="points-field"><span>النقاط</span><input data-testid="input-mission-reward" type="number" min="1" max="50" step="1" value={taskPoints} onChange={(event) => setTaskPoints(event.target.value)} /></label>
             <button className="primary-button" type="submit" data-testid="button-create-mission"><Plus size={16} /> إضافة المهمة</button>
           </div>
           {taskError && <p className="form-error" data-testid="status-create-mission-error">{taskError}</p>}
@@ -2280,9 +2103,10 @@ function HomeView({
         <div className="missions-grid">
              {availableMissions.map((item) => {
             const Icon = item.icon;
-                const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={Boolean(activeMission && activeMission.id !== item.id)}>
+                const isLatestCustom = item.id.startsWith("custom-") && item.id === availableMissions.at(-1)?.id;
+                const missionCard = <button key={item.id} className={`mission-card ${item.featured ? "featured" : ""} ${isLatestCustom ? "latest-custom-mission" : ""}`} data-testid={`button-mission-${item.id}`} data-sound="start" onClick={() => onStart(item)} disabled={Boolean(activeMission && activeMission.id !== item.id)}>
                  <div className="mission-top"><span className="mission-icon"><Icon size={19} /></span><span className="mission-duration"><Clock3 size={12} style={{ verticalAlign: "middle", marginLeft: 3 }} /> {formatDuration(item.duration)}</span><span className="card-avatar" aria-label={`رمز ${profile.name}`}>{avatar}</span></div>
-                  <h3>{item.title}</h3><p>{item.description}</p>{item.requiresCode && <span className="locked-mission-label"><LockKeyhole size={12} /> يحتاج رمز ولي الأمر • مكافأة {item.rewardPoints?.toLocaleString("ar-SA")} نقطة</span>}<ArrowLeft className="mission-arrow" size={18} />
+                  <h3>{item.title}</h3><p>{item.description}</p>{item.rewardPoints && <span className="mission-reward">مكافأة {item.rewardPoints.toLocaleString("ar-SA")} نقطة</span>}<ArrowLeft className="mission-arrow" size={18} />
                </button>;
                return item.id.startsWith("custom-") ? <div className="mission-card-wrap" key={item.id}>{missionCard}<button type="button" className="delete-mission" aria-label={`حذف مهمة ${item.title}`} data-testid={`button-delete-mission-${item.id}`} onClick={() => onDeleteMission(item.id)}><CircleX size={15} /> حذف</button></div> : missionCard;
           })}
@@ -2302,13 +2126,13 @@ function HomeView({
           </div>
             <div className="map-points-summary"><strong>{points} / {mapTotalPoints}</strong><span>نقطة في خريطة {profile.name}</span><div className="map-points-track"><i style={{ width: `${Math.max(0, Math.min(100, (points / mapTotalPoints) * 100))}%` }} /></div></div>
             {points >= mapFinishPoints && <div className="map-complete">
-              <div><strong>فاز {profile.name} بالمرحلة الأخيرة!</strong><span>أدخل رمز القائد لإعادة الرحلة إلى المرحلة الأولى.</span></div>
-              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" name="map_reset_code" autoComplete="new-password" value={resetCode} onChange={(event) => setResetCode(event.target.value)} aria-label="رمز ولي الأمر لإعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={() => void submitMapReset()}><RotateCcw size={15} /> إعادة الخريطة</button></div>
+              <div><strong>فاز {profile.name} بالمرحلة الأخيرة!</strong><span>أدخل الرمز الموحد للمملكة لإعادة الرحلة إلى المرحلة الأولى.</span></div>
+              <div className="map-reset-actions"><input data-testid="input-map-reset-code" className="code-input" type="password" name="map_reset_code" autoComplete="new-password" value={resetCode} onChange={(event) => setResetCode(event.target.value)} aria-label="الرمز الموحد للمملكة لإعادة الخريطة" /><button className="outline-button" type="button" data-testid="button-reset-map" onClick={() => void submitMapReset()}><RotateCcw size={15} /> إعادة الخريطة</button></div>
               {resetError && <p className="form-error" data-testid="status-map-reset-error">{resetError}</p>}
             </div>}
         </div>
       </section>
-      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} onRequestChildUnlock={onRequestChildUnlock} />
+      <ChildExtras content={childContent} points={points} rewards={childRewards} childName={profile.name} childAvatar={avatar} onSpend={onSpendReward} onOpenBox={onOpenRewardBox} onAwardPoints={onAwardExtraPoints} />
     </>
   );
 }
@@ -2387,8 +2211,8 @@ function QuestView({
             {!timeUp ? finishCodeOpen ? (
               <form className="finish-code-box early-finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
                 <strong>إنهاء المهمة قبل انتهاء الوقت</strong>
-                <label htmlFor="finish-code">رمز ولي الأمر</label>
-                <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
+                <label htmlFor="finish-code">الرمز الموحد للمملكة</label>
+                <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="الرمز الموحد للمملكة" autoFocus />
                 {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
                 <div className="finish-code-actions">
                   <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
@@ -2405,8 +2229,8 @@ function QuestView({
                  </div>
                ) : (
                   <form className="finish-code-box" onSubmit={(event) => { event.preventDefault(); onVerifyCode(); }}>
-                   <label htmlFor="finish-code">رمز إنهاء المهمة</label>
-                     <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="رمز إنهاء المهمة" autoFocus />
+                   <label htmlFor="finish-code">الرمز الموحد للمملكة</label>
+                     <input id="finish-code" className="code-input" data-testid="input-finish-code" type="password" name="finish_code" autoComplete="new-password" inputMode="numeric" maxLength={4} value={finishCode} onChange={(event) => onCode(event.target.value.replace(/\D/g, ""))} aria-label="الرمز الموحد للمملكة" autoFocus />
                    {error && <p className="gate-error" data-testid="status-finish-code-error">{error}</p>}
                     <div className="finish-code-actions">
                       <button className="primary-button" type="submit" data-testid="button-verify-finish-code"><ShieldCheck size={16} /> متابعة</button>
@@ -2475,7 +2299,7 @@ function GateView({
       ) : (
         <>
           <h1 data-testid="heading-parent-gate">هل تم الإنجاز؟</h1>
-          <p>بعد إدخال رمز القائد، يتأكد ولي الأمر من أن المهمة الكاملة أُنجزت فعلاً في الدفتر أو الكتاب.</p>
+          <p>بعد إدخال الرمز الموحد للمملكة، يتأكد المسؤول من أن المهمة الكاملة أُنجزت فعلاً في الدفتر أو الكتاب.</p>
           <div className="answer-actions">
             <button className="primary-button gold" data-testid="button-answer-yes" data-sound="success" onClick={() => onAnswer("yes")}><CircleCheck size={19} /> نعم، تم الإنجاز</button>
             <button className="outline-button" data-testid="button-answer-no" data-sound="failure" onClick={() => onAnswer("no")}><CircleX size={19} /> لا، ليس بعد</button>
@@ -2515,7 +2339,6 @@ function ParentView({
   saved,
   soundPreferences,
   onSoundPreferencesChange,
-  onSaveExtraChallenge,
   onChooseProfile,
   onChooseAvatar,
 }: {
@@ -2523,37 +2346,10 @@ function ParentView({
   saved: SavedState;
   soundPreferences: SoundPreferences;
   onSoundPreferencesChange: (preferences: SoundPreferences) => void;
-  onSaveExtraChallenge: (title: string, durationMinutes: number, rewardPoints: number) => void;
   onChooseProfile: () => void;
   onChooseAvatar: (profileId: ProfileId, preset: string) => void;
 }) {
   const total = dynamicProfiles.reduce((sum, item) => sum + (saved.completed[item.id] ?? 0), 0);
-  const [extraTitle, setExtraTitle] = useState(saved.extraChallenge.title);
-  const [extraMinutes, setExtraMinutes] = useState(String(saved.extraChallenge.duration / 60));
-  const [extraPoints, setExtraPoints] = useState(String(saved.extraChallenge.rewardPoints));
-  const [extraChallengeError, setExtraChallengeError] = useState("");
-
-  const submitExtraChallenge = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const title = extraTitle.trim();
-    const minutes = Number(extraMinutes);
-    const rewardPoints = Number(extraPoints);
-    if (!title || title.length > 60) {
-      setExtraChallengeError("اكتب اسم التحدي، وبحد أقصى 60 حرفاً.");
-      return;
-    }
-    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
-      setExtraChallengeError("اختر مدة بين دقيقة واحدة وساعتين.");
-      return;
-    }
-    if (!Number.isInteger(rewardPoints) || rewardPoints < 1 || rewardPoints > 50) {
-      setExtraChallengeError("اختر مكافأة بين نقطة واحدة و50 نقطة.");
-      return;
-    }
-    onSaveExtraChallenge(title, minutes, rewardPoints);
-    setExtraChallengeError("");
-  };
-
   return (
     <section className="parent-view">
       <div className="parent-banner"><div><div className="eyebrow">مرصد الوالدين • {getArabicDate()}</div><h1>غرفة القيادة العائلية</h1><p>ملخص لطيف لما أنجزه الأبطال اليوم، من دون تحويل الرحلة إلى جدول درجات.</p></div><div className="parent-total" data-testid="display-family-total"><strong>{total}</strong><span>مهمة في دفتر العائلة</span></div></div>
@@ -2571,22 +2367,6 @@ function ParentView({
           {total > 0 ? <div className="timeline-item"><span className="timeline-icon"><Trophy size={14} /></span><div className="timeline-copy"><strong>كنز جديد في الدفتر</strong><p>آخر إنجاز عائلي: {total} مهام مكتملة.</p></div></div> : <div className="empty-reward" data-testid="empty-parent-activity"><CircleHelp size={17} /><div>لم يبدأ أي بطل مهمة بعد. الخريطة تنتظر أول خطوة.</div></div>}
         </div></div>
       </div>
-      <section className="extra-challenge-settings panel" data-testid="panel-extra-challenge-settings">
-        <div className="sound-settings-heading">
-          <div className="sound-settings-icon extra-challenge-settings-icon" aria-hidden="true"><KeyRound size={21} /></div>
-          <div>
-            <h2 className="panel-title">تحدي إضافي</h2>
-            <p className="panel-subtitle">سمِّ التحدي واضبط وقته ومكافأته. لن يبدأ الطفل التحدي إلا بعد إدخال رمز ولي الأمر.</p>
-          </div>
-        </div>
-        <form className="extra-challenge-form" onSubmit={submitExtraChallenge}>
-          <label className="extra-challenge-name-field"><span>اسم التحدي</span><input data-testid="input-extra-challenge-title" type="text" maxLength={60} value={extraTitle} onChange={(event) => setExtraTitle(event.target.value)} placeholder="مثال: رحلة حفظ سورة قصيرة" /></label>
-          <label><span>الوقت بالدقائق</span><input data-testid="input-extra-challenge-duration" type="number" min="1" max="120" step="1" value={extraMinutes} onChange={(event) => setExtraMinutes(event.target.value)} /></label>
-          <label><span>نقاط المكافأة</span><input data-testid="input-extra-challenge-reward" type="number" min="1" max="50" step="1" value={extraPoints} onChange={(event) => setExtraPoints(event.target.value)} /></label>
-          <button className="primary-button" type="submit" data-testid="button-save-extra-challenge"><Check size={16} /> حفظ التحدي الإضافي</button>
-        </form>
-        {extraChallengeError && <p className="form-error" data-testid="status-extra-challenge-settings-error">{extraChallengeError}</p>}
-      </section>
        <section className="sound-settings panel" data-testid="panel-sound-settings">
          <div className="sound-settings-heading">
            <div className="sound-settings-icon" aria-hidden="true">{soundPreferences.enabled ? <Volume2 size={21} /> : <VolumeX size={21} />}</div>

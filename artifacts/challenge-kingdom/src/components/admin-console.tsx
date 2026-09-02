@@ -21,7 +21,7 @@ import { defaultChildContent, normalizeChildContent, validateChildContent, type 
 
 type AdminConsoleProps = { initialToken: string; onClose: () => void };
 
-const emptyMember = { role: "child" as MemberRole, name: "", code: "", grade: "", title: "", quote: "", color: "#ea4b5e" };
+const emptyMember = { role: "child" as MemberRole, name: "", grade: "", title: "", quote: "", color: "#ea4b5e" };
 const memberColors = ["#ea4b5e", "#e58a46", "#6d6aac", "#34866a", "#3677a7", "#a8577d"];
 const codeIsValid = (value: string) => value.length >= 4 && value.length <= 64;
 
@@ -40,7 +40,6 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
   const [familyName, setFamilyName] = useState("");
   const [familyUsername, setFamilyUsername] = useState("");
   const [adminCode, setAdminCode] = useState("");
-  const [memberCode, setMemberCode] = useState<Record<string, string>>({});
   const [showCreateFamily, setShowCreateFamily] = useState(false);
   const [showFamilySettings, setShowFamilySettings] = useState(false);
   const [showMemberForm, setShowMemberForm] = useState(false);
@@ -94,7 +93,6 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
       setFamilyUsername(currentFamily.username ?? "");
       setMembers(result.members);
       setChildContent(normalizeChildContent(contentResult.content));
-      setMemberCode({});
     } catch (cause) {
       showFailure(cause, "تعذر تحميل ملفات المملكة.");
     } finally {
@@ -146,17 +144,12 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
       setError("اكتب اسم العضو.");
       return;
     }
-    if (!codeIsValid(newMember.code)) {
-      setError("رمز العضو يجب أن يتكون من 4 إلى 64 حرفاً.");
-      return;
-    }
     beginAction();
     try {
       await accountsApi.createMember(token, {
         familyId: selectedFamily.id,
         role: newMember.role,
         name: newMember.name.trim(),
-        code: newMember.code,
         ...(newMember.grade.trim() ? { grade: newMember.grade.trim() } : {}),
         ...(newMember.title.trim() ? { title: newMember.title.trim() } : {}),
         ...(newMember.quote.trim() ? { quote: newMember.quote.trim() } : {}),
@@ -196,39 +189,20 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
     }
   };
 
-  const rotateMemberCode = async (member: FamilyMember) => {
-    const newCode = memberCode[member.id] ?? "";
-    if (!token || !selectedFamily) return;
-    if (!codeIsValid(newCode)) {
-      setError("الرمز الجديد يجب أن يتكون من 4 إلى 64 حرفاً.");
-      return;
-    }
-    beginAction();
-    try {
-      await accountsApi.changeMemberCode(token, selectedFamily.id, member.id, newCode);
-      setMemberCode((current) => ({ ...current, [member.id]: "" }));
-      setNotice(`تم تغيير رمز ${member.name} وإبطال جلساته القديمة.`);
-    } catch (cause) {
-      showFailure(cause, "تعذر تغيير الرمز.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const rotateFamilyCode = async (event: FormEvent) => {
     event.preventDefault();
     if (!token || !selectedFamily) return;
     if (!codeIsValid(familyCode)) {
-      setError("رمز المملكة يجب أن يتكون من 4 إلى 64 حرفاً.");
+      setError("الرمز الموحد يجب أن يتكون من 4 إلى 64 حرفاً.");
       return;
     }
     beginAction();
     try {
       await accountsApi.changeFamilyCode(token, selectedFamily.id, familyCode);
       setFamilyCode("");
-      setNotice("تم تغيير رمز المملكة ونقل التقدم وإبطال جلسات الرمز القديم.");
+      setNotice("تم تغيير الرمز الموحد ونقل التقدم وإبطال جلسات الرمز القديم.");
     } catch (cause) {
-      showFailure(cause, "تعذر تغيير رمز المملكة.");
+      showFailure(cause, "تعذر تغيير الرمز الموحد.");
     } finally {
       setLoading(false);
     }
@@ -436,7 +410,7 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
 
               <div className="admin-info-banner" data-testid="panel-feature-assurance">
                 <Sparkles size={21} />
-                <p><strong>كل طفل تضيفه يحصل تلقائياً على كامل التجربة:</strong> التحديات، المؤقت والاستراحة، النقاط والمكافآت، الخريطة، المهام المخصصة، والتحقق بواسطة ولي الأمر. رمز المملكة يربط الأجهزة، أما رمز ولي الأمر فيحمي أوامر الوالدين.</p>
+                <p><strong>كل طفل تضيفه يحصل تلقائياً على كامل التجربة:</strong> التحديات، المؤقت والاستراحة، النقاط والمكافآت، الخريطة، المهام المخصصة، والتحقق بواسطة ولي الأمر. الرمز الموحد للمملكة يربط الأجهزة ويفتح جميع ملفات الأسرة.</p>
               </div>
 
               <section className="admin-section" aria-labelledby="owner-section-title">
@@ -444,8 +418,8 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
                   <div><span className="admin-kicker">صلاحيات الوالدين</span><h3 id="owner-section-title">ولي الأمر</h3></div>
                   {!owner && <button className="admin-btn primary" type="button" data-testid="button-add-owner" onClick={() => openMemberForm("owner")}><Plus size={16} /> إضافة ولي الأمر</button>}
                 </div>
-                {owner ? <MemberCard member={owner} familyId={selectedFamily.id} code={memberCode[owner.id] ?? ""} loading={loading} onCodeChange={(value) => setMemberCode((current) => ({ ...current, [owner.id]: value }))} onRotate={() => void rotateMemberCode(owner)} onDelete={() => void deleteMember(owner)} /> :
-                  <div className="admin-owner-empty" data-testid="empty-owner"><UserRound size={35} /><div><strong>المملكة تحتاج ولي أمر</strong><p>ولي الأمر هو المسؤول عن التحديات والمكافآت والتحقق، وله رمز مستقل عن رمز المملكة.</p></div></div>}
+                {owner ? <MemberCard member={owner} loading={loading} onDelete={() => void deleteMember(owner)} /> :
+                  <div className="admin-owner-empty" data-testid="empty-owner"><UserRound size={35} /><div><strong>المملكة تحتاج ولي أمر</strong><p>ولي الأمر هو المسؤول عن التحديات والمكافآت والتحقق، ويستخدم الرمز الموحد للمملكة.</p></div></div>}
               </section>
 
               <section className="admin-section" aria-labelledby="children-section-title">
@@ -454,7 +428,7 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
                   <button className="admin-btn primary" type="button" data-testid="button-add-child" onClick={() => openMemberForm("child")}><Plus size={16} /> إضافة طفل</button>
                 </div>
                 {children.length === 0 ? <div className="admin-owner-empty" data-testid="empty-children"><Baby size={35} /><div><strong>لا توجد ملفات أطفال بعد</strong><p>أضف الطفل ليظهر ملفه مباشرة في شاشة الأبطال مع كامل الميزات.</p></div></div> :
-                  <div className="admin-grid">{children.map((child) => <MemberCard key={child.id} member={child} familyId={selectedFamily.id} code={memberCode[child.id] ?? ""} loading={loading} onCodeChange={(value) => setMemberCode((current) => ({ ...current, [child.id]: value }))} onRotate={() => void rotateMemberCode(child)} onDelete={() => void deleteMember(child)} />)}</div>}
+                  <div className="admin-grid">{children.map((child) => <MemberCard key={child.id} member={child} loading={loading} onDelete={() => void deleteMember(child)} />)}</div>}
               </section>
             </>
           )}
@@ -477,7 +451,6 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
         <Modal title={newMember.role === "owner" ? "إضافة ولي الأمر" : "إضافة ملف طفل"} onClose={() => setShowMemberForm(false)} testId="modal-create-member">
           <form onSubmit={createMember}>
             <label className="admin-field"><span>{newMember.role === "owner" ? "اسم ولي الأمر" : "اسم الطفل"}</span><input className="admin-input" data-testid="input-new-member-name" maxLength={120} value={newMember.name} onChange={(event) => setNewMember({ ...newMember, name: event.target.value })} required /></label>
-            <label className="admin-field"><span>الرمز الخاص</span><input className="admin-input code-input" data-testid="input-new-member-code" type="password" minLength={4} maxLength={64} value={newMember.code} onChange={(event) => setNewMember({ ...newMember, code: event.target.value })} autoComplete="new-password" required /><small>{newMember.role === "owner" ? "يحمي أوامر التحديات والمكافآت والإدارة العائلية." : "يستخدمه الطفل لفتح ملفه فقط."}</small></label>
             {newMember.role === "child" && <>
               <div className="admin-form-row"><label className="admin-field"><span>الصف</span><input className="admin-input" data-testid="input-new-member-grade" maxLength={120} value={newMember.grade} onChange={(event) => setNewMember({ ...newMember, grade: event.target.value })} placeholder="مثال: الصف الرابع" /></label><label className="admin-field"><span>اللقب</span><input className="admin-input" data-testid="input-new-member-title" maxLength={120} value={newMember.title} onChange={(event) => setNewMember({ ...newMember, title: event.target.value })} placeholder="مثال: فارس الأرقام" /></label></div>
               <label className="admin-field"><span>عبارة الطفل</span><input className="admin-input" data-testid="input-new-member-quote" maxLength={500} value={newMember.quote} onChange={(event) => setNewMember({ ...newMember, quote: event.target.value })} placeholder="عبارة تشجيعية تظهر في ملفه" /></label>
@@ -500,8 +473,8 @@ export function AdminConsole({ initialToken, onClose }: AdminConsoleProps) {
             <div className="admin-member-code-row"><input className="admin-input" data-testid="input-family-username" dir="ltr" pattern="[A-Za-z0-9]{3,64}" minLength={3} maxLength={64} value={familyUsername} onChange={(event) => setFamilyUsername(event.target.value.replace(/[^A-Za-z0-9]/g, ""))} autoComplete="off" required /><button className="admin-btn outline-dark" data-testid="button-save-family-username" disabled={loading}>حفظ اسم المستخدم</button></div>
           </form>
           <form className="admin-settings-block" onSubmit={rotateFamilyCode}>
-            <h4>رمز المملكة</h4>
-            <p>تغييره ينقل التقدم إلى الرمز الجديد ويلغي عمل الرمز القديم.</p>
+            <h4>الرمز الموحد</h4>
+            <p>يستخدمه جميع أفراد الأسرة للدخول. تغييره ينقل التقدم إلى الرمز الجديد ويلغي الرمز القديم وجميع الجلسات.</p>
             <div className="admin-member-code-row"><input className="admin-input code-input" data-testid="input-family-new-code" type="password" minLength={4} maxLength={64} value={familyCode} onChange={(event) => setFamilyCode(event.target.value)} placeholder="الرمز الجديد" autoComplete="new-password" required /><button className="admin-btn outline-dark" data-testid="button-change-family-code" disabled={loading}><KeyRound size={15} /> تغيير الرمز</button></div>
           </form>
           <div className="admin-settings-block danger-zone">
@@ -541,12 +514,6 @@ function Modal({ title, onClose, testId, children }: { title: string; onClose: (
 }
 
 function ContentEditorFields({ value, onChange }: { value: ChildContentConfig; onChange: (value: ChildContentConfig) => void }) {
-  const updateLetter = (index: number, patch: Partial<ChildContentConfig["letterGames"][number]>) => {
-    onChange({ ...value, letterGames: value.letterGames.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
-  };
-  const updateNumber = (index: number, patch: Partial<ChildContentConfig["numberQuestions"][number]>) => {
-    onChange({ ...value, numberQuestions: value.numberQuestions.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
-  };
   const updateStory = (index: number, patch: Partial<ChildContentConfig["readingStories"][number]>) => {
     onChange({ ...value, readingStories: value.readingStories.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
   };
@@ -566,46 +533,10 @@ function ContentEditorFields({ value, onChange }: { value: ChildContentConfig; o
         <summary>نقاط التعلّم <span>تُمنح لكل إنجاز</span></summary>
         <div className="content-editor-card learning-point-rewards">
           <div className="admin-form-row">
-            <label className="admin-field"><span>الإجابة الصحيحة للحروف</span><input className="admin-input" data-testid="input-letter-answer-points" type="number" min={1} max={100} value={value.pointRewards.letterAnswer} onChange={(event) => onChange({ ...value, pointRewards: { ...value.pointRewards, letterAnswer: Number(event.target.value) } })} required /></label>
-            <label className="admin-field"><span>الإجابة الصحيحة للأرقام</span><input className="admin-input" data-testid="input-number-answer-points" type="number" min={1} max={100} value={value.pointRewards.numberAnswer} onChange={(event) => onChange({ ...value, pointRewards: { ...value.pointRewards, numberAnswer: Number(event.target.value) } })} required /></label>
             <label className="admin-field"><span>إكمال قصة القراءة</span><input className="admin-input" data-testid="input-reading-story-points" type="number" min={1} max={100} value={value.pointRewards.readingStory} onChange={(event) => onChange({ ...value, pointRewards: { ...value.pointRewards, readingStory: Number(event.target.value) } })} required /></label>
           </div>
         </div>
       </details>
-      <details open>
-        <summary>درب الحروف <span>6 ألعاب</span></summary>
-        <div className="content-editor-list">
-          {value.letterGames.map((game, index) => (
-            <fieldset className="content-editor-card" key={game.id}>
-              <legend>اللعبة {index + 1}</legend>
-              <label className="admin-field"><span>الاسم</span><input className="admin-input" data-testid={`input-letter-title-${index}`} maxLength={120} value={game.title} onChange={(event) => updateLetter(index, { title: event.target.value })} required /></label>
-              <label className="admin-field"><span>التعليمات</span><input className="admin-input" maxLength={240} value={game.description} onChange={(event) => updateLetter(index, { description: event.target.value })} required /></label>
-              <label className="admin-field"><span>السؤال</span><input className="admin-input" maxLength={160} value={game.question} onChange={(event) => updateLetter(index, { question: event.target.value })} required /></label>
-               <label className="admin-field"><span>الخيارات — افصل بينها بعلامة |</span><input className="admin-input" value={game.options.join(" | ")} onChange={(event) => {
-                 const options = event.target.value.split("|").map((item) => item.trim()).filter(Boolean);
-                 updateLetter(index, { options, answer: options.includes(game.answer) ? game.answer : (options[0] ?? "") });
-               }} required /></label>
-              <label className="admin-field"><span>الإجابة الصحيحة</span><select className="admin-input" value={game.answer} onChange={(event) => updateLetter(index, { answer: event.target.value })}>{game.options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
-            </fieldset>
-          ))}
-        </div>
-      </details>
-
-      <details>
-        <summary>كهف الأرقام <span>5 مسائل</span></summary>
-        <div className="content-editor-list compact">
-          {value.numberQuestions.map((question, index) => (
-            <fieldset className="content-editor-card" key={question.id}>
-              <legend>المسألة {index + 1}</legend>
-              <div className="admin-form-row">
-                <label className="admin-field"><span>صيغة المسألة</span><input className="admin-input" data-testid={`input-number-prompt-${index}`} maxLength={80} value={question.prompt} onChange={(event) => updateNumber(index, { prompt: event.target.value })} required /></label>
-                <label className="admin-field"><span>الإجابة</span><input className="admin-input" type="number" min={-10000} max={10000} value={question.answer} onChange={(event) => updateNumber(index, { answer: Number(event.target.value) })} required /></label>
-              </div>
-            </fieldset>
-          ))}
-        </div>
-      </details>
-
       <details>
         <summary>القراءة السريعة <span>6 قصص</span></summary>
         <div className="content-editor-list">
@@ -648,19 +579,11 @@ function ContentEditorFields({ value, onChange }: { value: ChildContentConfig; o
 
 function MemberCard({
   member,
-  familyId,
-  code,
   loading,
-  onCodeChange,
-  onRotate,
   onDelete,
 }: {
   member: FamilyMember;
-  familyId: string;
-  code: string;
   loading: boolean;
-  onCodeChange: (value: string) => void;
-  onRotate: () => void;
   onDelete: () => void;
 }) {
   const isOwner = member.role === "owner";
@@ -672,8 +595,6 @@ function MemberCard({
       </header>
       {member.quote && <blockquote>{member.quote}</blockquote>}
       <div className="admin-member-actions">
-        <label htmlFor={`member-code-${familyId}-${member.id}`}>تغيير الرمز الخاص</label>
-        <div className="admin-member-code-row"><input id={`member-code-${familyId}-${member.id}`} className="admin-input code-input" data-testid={`input-member-code-${member.id}`} type="password" minLength={4} maxLength={64} value={code} onChange={(event) => onCodeChange(event.target.value)} placeholder="رمز جديد" autoComplete="new-password" /><button className="admin-btn outline-dark" data-testid={`button-change-member-code-${member.id}`} type="button" disabled={loading} onClick={onRotate}><KeyRound size={15} /> تغيير</button></div>
         <button className="admin-btn danger" data-testid={`button-delete-member-${member.id}`} type="button" disabled={loading} onClick={onDelete}><Trash2 size={15} /> حذف {isOwner ? "ولي الأمر" : "ملف الطفل"}</button>
       </div>
     </article>
