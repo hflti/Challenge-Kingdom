@@ -709,6 +709,7 @@ function App() {
   const pendingChildUnlockRef = useRef<(() => void) | null>(null);
   const localMutationRef = useRef(0);
   const approvalGateRef = useRef(Boolean(getInitialActiveChallenge()?.approvalStatus));
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const savedRef = useRef(saved);
   const activeChallengesRef = useRef(activeChallenges);
 
@@ -855,10 +856,11 @@ function App() {
     }
 
     const remoteChallenges = normalizeActiveChallenges(response.activeChallenges);
+    const previousCloudVersion = cloudVersionRef.current;
     cloudVersionRef.current = response.version;
     // A verified completion must not be replaced by an older running timer
     // returned while the newly authorized parent session is being connected.
-    if (approvalGateRef.current) return;
+    if (approvalGateRef.current && previousCloudVersion === null) return;
     lastCloudSignatureRef.current = cloudSyncSignature(
       { ...remoteState, selectedId: null },
       remoteChallenges,
@@ -1106,7 +1108,7 @@ function App() {
     lastCloudSignatureRef.current = signature;
     const timeout = window.setTimeout(() => {
       void saveCloudState();
-    }, 700);
+    }, 250);
     return () => window.clearTimeout(timeout);
   }, [activeChallenges, familyCode, memberToken, saved, saveCloudState]);
 
@@ -1115,11 +1117,16 @@ function App() {
     const poll = () => {
       if (!document.hidden) void pullCloudState();
     };
-    const interval = window.setInterval(poll, 4000);
+    const onVisibilityChange = () => {
+      if (!document.hidden) poll();
+    };
+    const interval = window.setInterval(poll, 1000);
     window.addEventListener("focus", poll);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", poll);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [familyCode, memberToken, pullCloudState]);
 
@@ -1144,6 +1151,53 @@ function App() {
   useEffect(() => {
     localStorage.setItem(activeChallengesKey, JSON.stringify(activeChallenges));
   }, [activeChallenges]);
+
+  useEffect(() => {
+    const shouldKeepAwake = Boolean(mission && !timeUp && (timerRunning || pauseActive));
+    let cancelled = false;
+
+    const releaseWakeLock = async () => {
+      const lock = wakeLockRef.current;
+      wakeLockRef.current = null;
+      if (lock && !lock.released) await lock.release().catch(() => undefined);
+    };
+
+    const acquireWakeLock = async () => {
+      if (!shouldKeepAwake || document.hidden || !("wakeLock" in navigator)) return;
+      if (wakeLockRef.current && !wakeLockRef.current.released) return;
+      try {
+        const lock = await navigator.wakeLock.request("screen");
+        if (cancelled || !shouldKeepAwake) {
+          await lock.release().catch(() => undefined);
+          return;
+        }
+        wakeLockRef.current = lock;
+        lock.addEventListener("release", () => {
+          if (wakeLockRef.current === lock) wakeLockRef.current = null;
+        }, { once: true });
+      } catch {
+        wakeLockRef.current = null;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        void releaseWakeLock();
+      } else {
+        void acquireWakeLock();
+      }
+    };
+
+    if (shouldKeepAwake) void acquireWakeLock();
+    else void releaseWakeLock();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      void releaseWakeLock();
+    };
+  }, [mission, pauseActive, timeUp, timerRunning]);
 
   const updateSoundPreferences = (next: SoundPreferences) => {
     setSoundPreferencesState(next);
@@ -1305,7 +1359,7 @@ function App() {
       activeChallengesRef.current = next;
       return next;
     });
-  }, [selectedId, activeChallengeId, mission, seconds, extensionCount, timerEndsAt, challengeStartedAt, pauseSeconds, pauseActive, pauseStartedAt, pauseResumeBlockedUntil, pausedSecondsTotal, pauseRechargeCount, pauseEndsAt, timeUp, timeUpAt, alertSeconds, alertEndsAt, graceSeconds, graceEndsAt, approvalStatus, completionChoice, timerRunning]);
+  }, [selectedId, activeChallengeId, mission, extensionCount, timerEndsAt, challengeStartedAt, pauseSeconds, pauseActive, pauseStartedAt, pauseResumeBlockedUntil, pausedSecondsTotal, pauseRechargeCount, pauseEndsAt, timeUp, timeUpAt, alertSeconds, alertEndsAt, graceSeconds, graceEndsAt, approvalStatus, completionChoice, timerRunning]);
 
   useEffect(() => {
     const reconcileFromClock = () => {
