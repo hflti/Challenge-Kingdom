@@ -194,10 +194,10 @@ export function validateChildContent(value: unknown): ChildContentValidation {
   }
   for (const item of content.storeItems) {
     if (!item || typeof item !== "object" || !validText(item.id, rules.storeItemIdMaxLength) || !validText(item.title, rules.storeItemTitleMaxLength)
-      || !Number.isInteger(item.cost) || item.cost < rules.storeCostMin || item.cost > rules.storeCostMax
+      || !Number.isInteger(item.cost) || item.cost < 1
       || !(rules.rewardKinds as readonly string[]).includes(item.kind as string)
       || (item.imageUrl !== undefined && (typeof item.imageUrl !== "string" || !/^\/api\/storage\/reward-images\/[0-9a-f-]{36}$/i.test(item.imageUrl)))) {
-      return { valid: false, error: "أسعار المتجر يجب أن تكون أعداداً صحيحة بين 5 و25." };
+      return { valid: false, error: "أسعار المتجر يجب أن تكون أعداداً صحيحة أكبر من صفر." };
     }
   }
   const validRewardList = (list: unknown, length: number) =>
@@ -274,7 +274,8 @@ export function normalizeChildContent(value: unknown): ChildContentConfig {
         id: text(item && typeof item === "object" ? (item as StoreItemContent).id : null, fallback.id, 80),
         title: text(item && typeof item === "object" ? (item as StoreItemContent).title : null, fallback.title, 160),
         cost: typeof (item && typeof item === "object" ? (item as StoreItemContent).cost : null) === "number"
-          ? Math.min(25, Math.max(5, Math.round((item as StoreItemContent).cost)))
+          && Number.isFinite((item as StoreItemContent).cost)
+          ? Math.max(1, Math.round((item as StoreItemContent).cost))
           : fallback.cost,
         kind,
         ...(
