@@ -164,6 +164,21 @@ test("rotating the unified kingdom code invalidates old sessions and keeps all f
     "The unified code should expose both the child profile and the parent observatory",
   );
 
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await expectStatus(accountAction("verify-member"), 401, {
+      method: "POST",
+      familyCode: oldFamilyCode,
+      familyUsername,
+      body: { memberId: childId, code: `${oldFamilyCode}-wrong`, role: "child" },
+    });
+  }
+  await expectStatus(accountAction("verify-member"), 401, {
+    method: "POST",
+    familyCode: oldFamilyCode,
+    familyUsername,
+    body: { memberId: childId, code: `${oldFamilyCode}-wrong`, role: "child" },
+  });
+
   const childSession = await expectStatus(accountAction("verify-member"), 200, {
     method: "POST",
     familyCode: oldFamilyCode,

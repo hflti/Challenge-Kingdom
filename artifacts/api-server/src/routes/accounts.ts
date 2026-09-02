@@ -14,9 +14,6 @@ import { isValidChildContent } from "../lib/child-content-validator";
 const router: IRouter = Router();
 const ADMIN_CREDENTIAL_ID = "global";
 const TOKEN_TTL_MS = 15 * 60 * 1000;
-const LOGIN_MAX_FAILURES = 5;
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
 type Role = "owner" | "child";
 type JsonMap = Record<string, unknown>;
@@ -55,28 +52,6 @@ function optionalText(value: unknown, maxLength: number): string | null | undefi
   if (value === undefined) return undefined;
   if (value === null) return null;
   return typeof value === "string" && value.length <= maxLength ? value.trim() : undefined;
-}
-
-function clientKey(req: Request): string {
-  return req.ip || "unknown";
-}
-
-function limited(req: Request, scope: string): boolean {
-  const key = `${scope}:${clientKey(req)}`;
-  const attempt = loginAttempts.get(key);
-  if (!attempt) return false;
-  if (attempt.resetAt <= Date.now()) {
-    loginAttempts.delete(key);
-    return false;
-  }
-  return attempt.count >= LOGIN_MAX_FAILURES;
-}
-
-function failed(req: Request, scope: string): void {
-  const key = `${scope}:${clientKey(req)}`;
-  const current = loginAttempts.get(key);
-  if (!current || current.resetAt <= Date.now()) loginAttempts.set(key, { count: 1, resetAt: Date.now() + LOGIN_WINDOW_MS });
-  else current.count += 1;
 }
 
 function issueToken(version: number): { token: string; expiresAt: string } {
@@ -219,14 +194,9 @@ router.get("/accounts", async (req, res): Promise<void> => {
   }
 
   if (action === "family-members") {
-    if (limited(req, "family-members")) {
-      res.status(429).json({ error: "Too many failed attempts. Please try again later." });
-      return;
-    }
     const code = req.header("x-family-code");
     const username = normalizedFamilyUsername(req.header("x-family-username"));
     if (!validCode(code) || !username) {
-      failed(req, "family-members");
       res.status(400).json({ error: "A valid family username and code are required." });
       return;
     }
@@ -235,7 +205,6 @@ router.get("/accounts", async (req, res): Promise<void> => {
       eq(familiesTable.familyKey, hashCode(code)),
     ));
     if (!family) {
-      failed(req, "family-members");
       res.status(404).json({ error: "Family not found." });
       return;
     }
@@ -253,10 +222,6 @@ router.post("/accounts", async (req, res): Promise<void> => {
   const body = req.body as Record<string, unknown>;
 
   if (action === "admin-reveal") {
-    if (limited(req, "admin-reveal")) {
-      res.status(429).json({ error: "Too many attempts. Please try again later." });
-      return;
-    }
     const revealCode = process.env.ADMIN_REVEAL_CODE;
     const submittedCode = typeof body.code === "string" ? body.code.trim() : body.code;
     let credential = validCode(revealCode) ? await ensureAdminCredential(revealCode) : undefined;
@@ -274,24 +239,17 @@ router.post("/accounts", async (req, res): Promise<void> => {
       && sameHash(hashCode(submittedCode), credential.codeHash),
     );
     if ((validInitialCode || validRotatedCode) && credential) {
-      loginAttempts.delete(`admin-reveal:${clientKey(req)}`);
       res.json({ ok: true, ...issueToken(credential.credentialVersion) });
       return;
     }
-    failed(req, "admin-reveal");
     res.status(401).json({ error: "Invalid administrator access code." });
     return;
   }
 
   if (action === "verify-member") {
-    if (limited(req, "verify-member")) {
-      res.status(429).json({ error: "Too many failed attempts. Please try again later." });
-      return;
-    }
     const familyCode = req.header("x-family-code");
     const username = normalizedFamilyUsername(req.header("x-family-username"));
     if (!validCode(familyCode) || !username || !validText(body.memberId, 128) || !validCode(body.code) || (body.role !== undefined && body.role !== "owner" && body.role !== "child")) {
-      failed(req, "verify-member");
       res.status(400).json({ error: "Invalid member verification request." });
       return;
     }
@@ -300,13 +258,11 @@ router.post("/accounts", async (req, res): Promise<void> => {
       eq(familiesTable.familyKey, hashCode(familyCode)),
     ));
     if (!family) {
-      failed(req, "verify-member");
       res.status(404).json({ error: "Family not found." });
       return;
     }
     const [member] = await db.select().from(membersTable).where(and(eq(membersTable.id, body.memberId), eq(membersTable.familyId, family.id)));
     if (!member || (body.role !== undefined && member.role !== body.role) || !sameHash(hashCode(body.code), family.familyKey)) {
-      failed(req, "verify-member");
       res.status(401).json({ error: "Invalid member credentials." });
       return;
     }
@@ -315,14 +271,9 @@ router.post("/accounts", async (req, res): Promise<void> => {
   }
 
   if (action === "bootstrap-family") {
-    if (limited(req, "bootstrap-family")) {
-      res.status(429).json({ error: "Too many failed attempts. Please try again later." });
-      return;
-    }
     const familyCode = req.header("x-family-code");
     const username = normalizedFamilyUsername(req.header("x-family-username"));
     if (!validCode(familyCode) || !username) {
-      failed(req, "bootstrap-family");
       res.status(400).json({ error: "A valid family username and code are required." });
       return;
     }
@@ -332,7 +283,6 @@ router.post("/accounts", async (req, res): Promise<void> => {
       eq(familiesTable.familyKey, familyKey),
     ));
     if (!family) {
-      failed(req, "bootstrap-family");
       res.status(404).json({ error: "Family not found." });
       return;
     }
