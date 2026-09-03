@@ -1,9 +1,8 @@
 module.exports = {
   hooks: {
-    readPackage(pkg) {
+    readPackageJson(pkg) {
       if (pkg.name === 'esbuild') {
-        pkg.pnpm = pkg.pnpm || {};
-        pkg.pnpm.allowBuild = true;
+        pkg.scripts = pkg.scripts || {};
       }
       return pkg;
     }
