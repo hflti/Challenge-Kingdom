@@ -1,12 +1,11 @@
-function readPackage(pkg) {
-  if (pkg.name === 'esbuild') {
-    pkg.scripts = pkg.scripts || {};
-  }
-  return pkg;
-}
-
 module.exports = {
   hooks: {
-    readPackage,
-  },
-};
+    readPackage(pkg) {
+      if (pkg.name === 'esbuild') {
+        pkg.pnpm = pkg.pnpm || {};
+        pkg.pnpm.allowBuild = true;
+      }
+      return pkg;
+    }
+  }
+}
